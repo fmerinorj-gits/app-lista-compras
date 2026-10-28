@@ -9,7 +9,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import gspread
 from google.oauth2.service_account import Credentials
 
-VERSAO_APP = "v.1.3"
+VERSAO_APP = "v.1.4"
 
 # Configuração de página idêntica ao padrão mobile/centered do App Luz & Água
 st.set_page_config(
