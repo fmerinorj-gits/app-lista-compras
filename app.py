@@ -1,4 +1,4 @@
-# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.1 ===
+# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.2 ===
 import math
 import time
 import streamlit as st
@@ -9,7 +9,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import gspread
 from google.oauth2.service_account import Credentials
 
-VERSAO_APP = "v.1.1"
+VERSAO_APP = "v.1.2"
 
 # Configuração de página idêntica ao padrão mobile/centered do App Luz & Água
 st.set_page_config(
@@ -247,6 +247,38 @@ CATALOGO_INICIAL = [
 
     # 🌾 SETOR K: MERCEARIA (GRÃOS)
     (74, "#1", "🌾 Setor K: Mercearia (Grãos)", "Arroz Branco", "Tio João", "Tio Mingote", 5.0, "Kg"),
+    (75, "#2", "🌾 Setor K: Mercearia (Grãos)", "Feijão manteiga ou vermelho", "--", "pct 0,5 Kg", 1.0, "Pct (0,5Kg)"),
+    (76, "#3", "🌾 Setor K: Mercearia (Grãos)", "Feijão Branco", "--", "pct 0,5 Kg", 1.0, "Pct (0,5Kg)"),
+    (77, "#4", "🌾 Setor K: Mercearia (Grãos)", "Feijão preto", "Tio João", "Máximo (pct 0,5 Kg)", 1.0, "Pct (0,5Kg)"),
+    (78, "#5", "🌾 Setor K: Mercearia (Grãos)", "Farinha de Mesa Fina Torrada", "Granfino", "pct 0,5 Kg", 1.0, "Pct (0,5Kg)"),
+    (79, "#6", "🌾 Setor K: Mercearia (Grãos)", "Farinha de Trigo (sem fermento)", "D. Benta", "Boa Sorte", 1.0, "Kg"),
+    (80, "#7", "🌾 Setor K: Mercearia (Grãos)", "Milharina ou Fubá Mimoso", "Granfino", "pct 0,5 Kg", 1.0, "Pct (0,5Kg)"),
+    (81, "#8", "🌾 Setor K: Mercearia (Grãos)", "Açúcar", "União", "Neve", 3.0, "Kg"),
+
+    # ➕ SETOR L: EXTRAS (SOMADOS AO MERCADO)
+    (82, "#E1", "➕ Setor L: Extras", "Soja clara pequena - PTS", "--", "-", 1.0, "Kg"),
+    (83, "#E2", "➕ Setor L: Extras", "Refil Filtro Cozinha", "--", "-", 2.0, "Un")
+]
+
+COLUNAS_CATALOGO = [
+    "Ordem", "Codigo", "Setor", "Produto", "Marca1", "Marca2",
+    "QtdPadrao", "Unidade", "PrecoRef", "Ativo"
+]
+
+COLUNAS_MES = [
+    "Ordem", "Codigo", "Setor", "Produto", "Marca1", "Marca2", "Unidade",
+    "Planejado", "QtdPlanejada", "PrecoUnit", "SubtotalPlanejado",
+    "Comprado", "QtdComprada", "PrecoRealUnit", "SubtotalReal", "ObsMes"
+]
+
+COLUNAS_RESUMO = [
+    "MesAno", "DataCompra", "TotalMercadoPlanejado", "TotalMercadoReal",
+    "TotalFarmaciaPlanejado", "TotalFarmaciaReal",
+    "Dinheiro", "BradescoDebito", "BradescoCredito",
+    "MercadoPagoDebito", "MercadoPagoCredito", "NubankDebito", "NubankCredito",
+    "PagamentoFarmacia", "ObsFechamento"
+]
+
 # === CONEXÃO COM GOOGLE SHEETS (GSPREAD) COM CACHE E PROTEÇÃO ANTI-QUOTA ===
 @st.cache_resource
 def get_gspread_client():
@@ -1446,4 +1478,4 @@ elif menu == "6. Cadastro de Produtos":
         limpar_cache_dados()
         st.session_state["msg_cat"] = "✅ Catálogo de produtos atualizado com sucesso!"
         st.rerun()
-# === FIM DO CÓDIGO - VERSÃO v.1.1 ===
+# === FIM DO CÓDIGO - VERSÃO v.1.2 ===
