@@ -1,5 +1,6 @@
-# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.0 ===
+# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.1 ===
 import math
+import time
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -8,7 +9,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import gspread
 from google.oauth2.service_account import Credentials
 
-VERSAO_APP = "v.1.0"
+VERSAO_APP = "v.1.1"
 
 # Configuração de página idêntica ao padrão mobile/centered do App Luz & Água
 st.set_page_config(
@@ -246,40 +247,7 @@ CATALOGO_INICIAL = [
 
     # 🌾 SETOR K: MERCEARIA (GRÃOS)
     (74, "#1", "🌾 Setor K: Mercearia (Grãos)", "Arroz Branco", "Tio João", "Tio Mingote", 5.0, "Kg"),
-    (75, "#2", "🌾 Setor K: Mercearia (Grãos)", "Feijão manteiga ou vermelho", "--", "pct 0,5 Kg", 1.0, "Pct (0,5Kg)"),
-    (76, "#3", "🌾 Setor K: Mercearia (Grãos)", "Feijão Branco", "--", "pct 0,5 Kg", 1.0, "Pct (0,5Kg)"),
-    (77, "#4", "🌾 Setor K: Mercearia (Grãos)", "Feijão preto", "Tio João", "Máximo (pct 0,5 Kg)", 1.0, "Pct (0,5Kg)"),
-    (78, "#5", "🌾 Setor K: Mercearia (Grãos)", "Farinha de Mesa Fina Torrada", "Granfino", "pct 0,5 Kg", 1.0, "Pct (0,5Kg)"),
-    (79, "#6", "🌾 Setor K: Mercearia (Grãos)", "Farinha de Trigo (sem fermento)", "D. Benta", "Boa Sorte", 1.0, "Kg"),
-    (80, "#7", "🌾 Setor K: Mercearia (Grãos)", "Milharina ou Fubá Mimoso", "Granfino", "pct 0,5 Kg", 1.0, "Pct (0,5Kg)"),
-    (81, "#8", "🌾 Setor K: Mercearia (Grãos)", "Açúcar", "União", "Neve", 3.0, "Kg"),
-
-    # ➕ SETOR L: EXTRAS
-    (82, "#E1", "➕ Setor L: Extras", "Soja clara pequena - PTS", "--", "-", 1.0, "Kg"),
-    (83, "#E2", "➕ Setor L: Extras", "Refil Filtro Cozinha", "--", "-", 2.0, "Un"),
-]
-
-COLUNAS_CATALOGO = [
-    "Ordem", "Codigo", "Setor", "Produto", "Marca1", "Marca2", "QtdPadrao", "Unidade", "PrecoRef", "Ativo"
-]
-
-COLUNAS_MES = [
-    "Ordem", "Codigo", "Setor", "Produto", "Marca1", "Marca2", "Unidade",
-    "Planejado", "QtdPlanejada", "PrecoUnit", "SubtotalPlanejado",
-    "Comprado", "QtdComprada", "PrecoRealUnit", "SubtotalReal", "ObsMes"
-]
-
-COLUNAS_RESUMO = [
-    "MesAno", "DataCompra", "TotalMercadoPlanejado", "TotalMercadoReal",
-    "TotalFarmaciaPlanejado", "TotalFarmaciaReal",
-    "Dinheiro",
-    "BradescoDebito", "BradescoCredito",
-    "MercadoPagoDebito", "MercadoPagoCredito",
-    "NubankDebito", "NubankCredito",
-    "PagamentoFarmacia", "ObsFechamento"
-]
-
-# === CONEXÃO COM GOOGLE SHEETS (GSPREAD) ===
+# === CONEXÃO COM GOOGLE SHEETS (GSPREAD) COM CACHE E PROTEÇÃO ANTI-QUOTA ===
 @st.cache_resource
 def get_gspread_client():
     scopes = [
@@ -290,39 +258,60 @@ def get_gspread_client():
     credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     return gspread.authorize(credentials)
 
+def executar_com_retry(func, *args, **kwargs):
+    """Evita queda por limite de requisições por minuto (APIError 429) do Google Sheets."""
+    ultimo_erro = None
+    for tentativa in range(4):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            ultimo_erro = e
+            time.sleep(1.2 * (tentativa + 1))
+    raise ultimo_erro
+
+@st.cache_resource(ttl=600)
 def get_spreadsheet_por_ano(ano_str=None):
     client = get_gspread_client()
     if not ano_str:
         ano_str = agora_br().strftime("%Y")
     nome_alvo = f"Compras {ano_str}"
     try:
-        return client.open(nome_alvo)
+        return executar_com_retry(client.open, nome_alvo)
     except gspread.SpreadsheetNotFound:
-        return client.open("Compras 2026")
+        return executar_com_retry(client.open, "Compras 2026")
+
+def limpar_cache_dados():
+    """Limpa o cache em memória sempre que algum dado é salvo na planilha."""
+    st.cache_data.clear()
 
 def criar_aba_no_inicio(spreadsheet, titulo, linhas="150", colunas="20"):
     try:
-        return spreadsheet.add_worksheet(title=titulo, rows=linhas, cols=colunas, index=0)
+        return executar_com_retry(spreadsheet.add_worksheet, title=titulo, rows=linhas, cols=colunas, index=0)
     except TypeError:
-        return spreadsheet.add_worksheet(title=titulo, rows=linhas, cols=colunas)
+        return executar_com_retry(spreadsheet.add_worksheet, title=titulo, rows=linhas, cols=colunas)
 
 def obter_aba_config(ano_str=None):
     sp = get_spreadsheet_por_ano(ano_str)
     try:
-        sheet = sp.worksheet("Configuracoes")
+        sheet = executar_com_retry(sp.worksheet, "Configuracoes")
     except gspread.WorksheetNotFound:
-        sheet = sp.add_worksheet(title="Configuracoes", rows="200", cols="2")
+        sheet = executar_com_retry(sp.add_worksheet, title="Configuracoes", rows="200", cols="2")
         mes_atual = agora_br().strftime("%m %Y")
-        sheet.append_rows([
-            ["Chave", "Valor"],
-            ["mes_ano_ativo", mes_atual],
-            ["data_compra_ativa", hoje_br().strftime("%d/%m/%Y")]
-        ], value_input_option="USER_ENTERED")
+        executar_com_retry(
+            sheet.append_rows,
+            [
+                ["Chave", "Valor"],
+                ["mes_ano_ativo", mes_atual],
+                ["data_compra_ativa", hoje_br().strftime("%d/%m/%Y")]
+            ],
+            value_input_option="USER_ENTERED"
+        )
     return sheet
 
+@st.cache_data(ttl=180, show_spinner=False)
 def carregar_config_dict(ano_str=None):
     try:
-        raw = obter_aba_config(ano_str).get_values()
+        raw = executar_com_retry(obter_aba_config(ano_str).get_values)
         cfg = {}
         if len(raw) > 1:
             for r in raw[1:]:
@@ -334,28 +323,29 @@ def carregar_config_dict(ano_str=None):
 
 def salvar_configs(novas_configs_dict, ano_str=None):
     sheet = obter_aba_config(ano_str)
-    existente = carregar_config_dict(ano_str)
+    existente = carregar_config_dict(ano_str).copy()
     existente.update({str(k): str(v) for k, v in novas_configs_dict.items()})
     linhas = [["Chave", "Valor"]]
     for k, v in existente.items():
         linhas.append([str(k), str(v)])
-    sheet.clear()
-    sheet.append_rows(linhas, value_input_option="USER_ENTERED")
+    executar_com_retry(sheet.clear)
+    executar_com_retry(sheet.append_rows, linhas, value_input_option="USER_ENTERED")
+    limpar_cache_dados()
 
 def obter_aba_catalogo(ano_str=None):
     sp = get_spreadsheet_por_ano(ano_str)
     try:
-        sheet = sp.worksheet("Catalogo")
-        vals = sheet.get_values()
+        sheet = executar_com_retry(sp.worksheet, "Catalogo")
+        vals = executar_com_retry(sheet.get_values)
         if len(vals) <= 1:
             raise gspread.WorksheetNotFound("Catálogo vazio")
         return sheet
     except gspread.WorksheetNotFound:
         try:
-            sheet = sp.worksheet("Catalogo")
-            sheet.clear()
+            sheet = executar_com_retry(sp.worksheet, "Catalogo")
+            executar_com_retry(sheet.clear)
         except gspread.WorksheetNotFound:
-            sheet = sp.add_worksheet(title="Catalogo", rows="200", cols="12")
+            sheet = executar_com_retry(sp.add_worksheet, title="Catalogo", rows="200", cols="12")
         linhas_init = [COLUNAS_CATALOGO]
         for item in CATALOGO_INICIAL:
             ordem, cod, setor, prod, m1, m2, qtd_p, unid = item
@@ -363,12 +353,13 @@ def obter_aba_catalogo(ano_str=None):
                 str(ordem), cod, setor, prod, m1, m2,
                 formatar_num_planilha(qtd_p, 3), unid, "0,00", "TRUE"
             ])
-        sheet.append_rows(linhas_init, value_input_option="USER_ENTERED")
+        executar_com_retry(sheet.append_rows, linhas_init, value_input_option="USER_ENTERED")
         return sheet
 
+@st.cache_data(ttl=180, show_spinner=False)
 def carregar_df_catalogo(ano_str=None):
     sheet = obter_aba_catalogo(ano_str)
-    vals = sheet.get_values()
+    vals = executar_com_retry(sheet.get_values)
     if len(vals) > 1:
         df = pd.DataFrame(vals[1:], columns=vals[0])
     else:
@@ -386,14 +377,14 @@ def carregar_df_catalogo(ano_str=None):
 def obter_aba_resumo_mensal(ano_str=None):
     sp = get_spreadsheet_por_ano(ano_str)
     try:
-        sheet = sp.worksheet("Resumo_Mensal")
-        vals = sheet.get_values()
+        sheet = executar_com_retry(sp.worksheet, "Resumo_Mensal")
+        vals = executar_com_retry(sheet.get_values)
         if len(vals) == 0:
-            sheet.append_row(COLUNAS_RESUMO, value_input_option="USER_ENTERED")
+            executar_com_retry(sheet.append_row, COLUNAS_RESUMO, value_input_option="USER_ENTERED")
         return sheet
     except gspread.WorksheetNotFound:
-        sheet = sp.add_worksheet(title="Resumo_Mensal", rows="100", cols="20")
-        sheet.append_row(COLUNAS_RESUMO, value_input_option="USER_ENTERED")
+        sheet = executar_com_retry(sp.add_worksheet, title="Resumo_Mensal", rows="100", cols="20")
+        executar_com_retry(sheet.append_row, COLUNAS_RESUMO, value_input_option="USER_ENTERED")
         return sheet
 
 def obter_aba_mes(mes_ano_str, ano_str=None):
@@ -402,8 +393,8 @@ def obter_aba_mes(mes_ano_str, ano_str=None):
     sp = get_spreadsheet_por_ano(ano_str)
     titulo_aba = f"{mes_ano_str} Compras"
     try:
-        sheet = sp.worksheet(titulo_aba)
-        vals = sheet.get_values()
+        sheet = executar_com_retry(sp.worksheet, titulo_aba)
+        vals = executar_com_retry(sheet.get_values)
         if len(vals) > 1:
             return sheet
     except gspread.WorksheetNotFound:
@@ -434,13 +425,14 @@ def obter_aba_mes(mes_ano_str, ano_str=None):
             "0,00",   # Subtotal Real
             ""        # ObsMes
         ])
-    sheet.clear()
-    sheet.append_rows(linhas_mes, value_input_option="USER_ENTERED")
+    executar_com_retry(sheet.clear)
+    executar_com_retry(sheet.append_rows, linhas_mes, value_input_option="USER_ENTERED")
     return sheet
 
-def carregar_df_mes(mes_ano_str, ano_str=None):
+@st.cache_data(ttl=180, show_spinner=False)
+def ler_dados_aba_mes_cached(mes_ano_str, ano_str=None):
     sheet = obter_aba_mes(mes_ano_str, ano_str)
-    vals = sheet.get_values()
+    vals = executar_com_retry(sheet.get_values)
     if len(vals) > 1:
         df = pd.DataFrame(vals[1:], columns=vals[0])
     else:
@@ -488,6 +480,12 @@ def carregar_df_mes(mes_ano_str, ano_str=None):
     df["QtdComprada_num"] = df["QtdComprada"].apply(safe_float)
     df["PrecoRealUnit_num"] = df["PrecoRealUnit"].apply(safe_float)
     df = df.sort_values("Ordem_num").reset_index(drop=True)
+    return df
+
+def carregar_df_mes(mes_ano_str, ano_str=None):
+    df = ler_dados_aba_mes_cached(mes_ano_str, ano_str).copy()
+    sp = get_spreadsheet_por_ano(ano_str)
+    sheet = executar_com_retry(sp.worksheet, f"{mes_ano_str} Compras")
     return df, sheet
 
 def salvar_df_mes(sheet, df_mes, ano_str=None, atualizar_preco_catalogo=True):
@@ -533,14 +531,14 @@ def salvar_df_mes(sheet, df_mes, ano_str=None, atualizar_preco_catalogo=True):
             str(r.get("ObsMes", "") or "")
         ])
 
-    sheet.clear()
-    sheet.append_rows(linhas_salvar, value_input_option="USER_ENTERED")
+    executar_com_retry(sheet.clear)
+    executar_com_retry(sheet.append_rows, linhas_salvar, value_input_option="USER_ENTERED")
 
     # Atualiza PrecoRef no Catálogo para já servir de base nos próximos meses
     if atualizar_preco_catalogo and mapa_precos_ref:
         try:
             sh_cat = obter_aba_catalogo(ano_str)
-            vals_cat = sh_cat.get_values()
+            vals_cat = executar_com_retry(sh_cat.get_values)
             if len(vals_cat) > 1:
                 novas_cat = [vals_cat[0]]
                 for row_c in vals_cat[1:]:
@@ -550,14 +548,15 @@ def salvar_df_mes(sheet, df_mes, ano_str=None, atualizar_preco_catalogo=True):
                     if cod_c in mapa_precos_ref and mapa_precos_ref[cod_c] > 0:
                         row_c[8] = formatar_num_planilha(mapa_precos_ref[cod_c], 2)
                     novas_cat.append(row_c[:len(COLUNAS_CATALOGO)])
-                sh_cat.clear()
-                sh_cat.append_rows(novas_cat, value_input_option="USER_ENTERED")
+                executar_com_retry(sh_cat.clear)
+                executar_com_retry(sh_cat.append_rows, novas_cat, value_input_option="USER_ENTERED")
         except Exception:
             pass
+    limpar_cache_dados()
 
 def salvar_resumo_pagamento(mes_ano_str, dados_resumo_dict, ano_str=None):
     sh_res = obter_aba_resumo_mensal(ano_str)
-    vals = sh_res.get_values()
+    vals = executar_com_retry(sh_res.get_values)
     cabecalho = vals[0] if len(vals) > 0 else COLUNAS_RESUMO
     linhas = [cabecalho]
     encontrou = False
@@ -590,13 +589,15 @@ def salvar_resumo_pagamento(mes_ano_str, dados_resumo_dict, ano_str=None):
     if not encontrou:
         linhas.append(nova_linha)
 
-    sh_res.clear()
-    sh_res.append_rows(linhas, value_input_option="USER_ENTERED")
+    executar_com_retry(sh_res.clear)
+    executar_com_retry(sh_res.append_rows, linhas, value_input_option="USER_ENTERED")
+    limpar_cache_dados()
 
+@st.cache_data(ttl=180, show_spinner=False)
 def obter_resumo_mes(mes_ano_str, ano_str=None):
     try:
         sh_res = obter_aba_resumo_mensal(ano_str)
-        vals = sh_res.get_values()
+        vals = executar_com_retry(sh_res.get_values)
         if len(vals) > 1:
             for r in vals[1:]:
                 if len(r) >= 13 and str(r[0]).strip() == mes_ano_str:
@@ -685,7 +686,7 @@ def acionar_fechamento_menu():
     st.session_state["recolher_menu"] += 1
     st.session_state["fechar_menu_agora"] = True
 
-st.sidebar.markdown("### 🛒 Menu de Compras")
+st.sidebar.markdown("### 🛒Compras")
 
 # Seletor rápido de Mês/Ano no topo da barra lateral
 opcoes_meses = []
@@ -716,7 +717,7 @@ menu = st.sidebar.radio(
     ],
     on_change=acionar_fechamento_menu
 )
-st.sidebar.caption(f"📌 Versão {VERSAO_APP} | 🕒 Brasília: {agora_br().strftime('%d/%m/%Y %H:%M')}")
+st.sidebar.caption(f"📌 Versão {VERSAO_APP}")
 
 if st.session_state.get("fechar_menu_agora", False):
     st.session_state["fechar_menu_agora"] = False
@@ -808,14 +809,19 @@ if menu == "1. Planejamento (Casa)":
                     nova_ordem = int(df_mes["Ordem_num"].max() + 1) if not df_mes.empty else 84
                     novo_cod = f"#AV{nova_ordem}"
                     sub_av = arredondar_moeda(av_qtd * av_preco, 2)
-                    sheet_mes.append_row([
-                        str(nova_ordem), novo_cod, av_setor, av_prod.strip(),
-                        av_m1.strip() or "--", "Avulso do Mês", av_unid.strip() or "Un",
-                        "TRUE", formatar_num_planilha(av_qtd, 3), formatar_num_planilha(av_preco, 2),
-                        formatar_num_planilha(sub_av, 2),
-                        "FALSE", formatar_num_planilha(av_qtd, 3), formatar_num_planilha(av_preco, 2),
-                        "0,00", "Item avulso"
-                    ], value_input_option="USER_ENTERED")
+                    executar_com_retry(
+                        sheet_mes.append_row,
+                        [
+                            str(nova_ordem), novo_cod, av_setor, av_prod.strip(),
+                            av_m1.strip() or "--", "Avulso do Mês", av_unid.strip() or "Un",
+                            "TRUE", formatar_num_planilha(av_qtd, 3), formatar_num_planilha(av_preco, 2),
+                            formatar_num_planilha(sub_av, 2),
+                            "FALSE", formatar_num_planilha(av_qtd, 3), formatar_num_planilha(av_preco, 2),
+                            "0,00", "Item avulso"
+                        ],
+                        value_input_option="USER_ENTERED"
+                    )
+                    limpar_cache_dados()
                     st.session_state["msg_sucesso_plan"] = f"✅ Item avulso '{av_prod}' adicionado e marcado para compra!"
                     st.rerun()
 
@@ -1237,6 +1243,8 @@ elif menu == "4. Tabela de Preços do Mês":
     setor_pr_sel = st.selectbox("Filtrar Setor para digitar preços:", ["📋 Todos os Setores"] + SETORES_OFICIAIS, index=0)
     df_pr_view = df_mes if setor_pr_sel.startswith("📋") else df_mes[df_mes["Setor"] == setor_pr_sel]
 
+    st.caption("💡 Você pode digitar o preço inteiro (ex: `5`), com vírgula (ex: `35,00`) ou com ponto (ex: `35.00`).")
+
     df_editor_pr = pd.DataFrame({
         "idx_orig": df_pr_view.index,
         "Código": df_pr_view["Codigo"],
@@ -1244,8 +1252,8 @@ elif menu == "4. Tabela de Preços do Mês":
         "Produto": df_pr_view["Produto"],
         "Marca 1": df_pr_view["Marca1"].apply(exibir_marca_limpa),
         "Unid.": df_pr_view["Unidade"],
-        "Qtd Padrão": df_pr_view["QtdPlanejada_num"],
-        "Preço Unit. (R$)": df_pr_view["PrecoUnit_num"]
+        "Qtd Padrão": df_pr_view["QtdPlanejada_num"].apply(formatar_qtd_br),
+        "Preço Unit. (R$)": df_pr_view["PrecoUnit_num"].apply(lambda v: f"{safe_float(v):.2f}".replace(".", ","))
     })
 
     editado_pr = st.data_editor(
@@ -1255,7 +1263,7 @@ elif menu == "4. Tabela de Preços do Mês":
         disabled=["idx_orig", "Código", "Setor", "Produto", "Marca 1", "Unid.", "Qtd Padrão"],
         column_config={
             "idx_orig": None,
-            "Preço Unit. (R$)": st.column_config.NumberColumn("Preço Unit. (R$)", min_value=0.0, step=0.10, format="R$ %.2f")
+            "Preço Unit. (R$)": st.column_config.TextColumn("Preço Unit. (R$)", help="Digite ex: 5 ou 35,00 ou 35.50")
         }
     )
 
@@ -1280,7 +1288,7 @@ elif menu == "5. Relatório / Histórico":
     ano_hist_sel = st.selectbox("Consultar Planilha Anual:", [str(a) for a in range(2026, 2031)], index=0)
     try:
         sh_res_h = obter_aba_resumo_mensal(ano_hist_sel)
-        vals_rh = sh_res_h.get_values()
+        vals_rh = executar_com_retry(sh_res_h.get_values)
     except Exception:
         vals_rh = []
 
@@ -1364,18 +1372,23 @@ elif menu == "6. Cadastro de Produtos":
                     st.warning("⚠️ Informe o nome do produto.")
                 else:
                     sh_cat = obter_aba_catalogo(ano_ativo)
-                    sh_cat.append_row([
-                        str(prox_num),
-                        np_cod.strip(),
-                        np_setor,
-                        np_prod.strip(),
-                        np_m1.strip() or "--",
-                        np_m2.strip() or "-",
-                        formatar_num_planilha(np_qtd, 3),
-                        np_unid,
-                        formatar_num_planilha(np_preco, 2),
-                        "TRUE"
-                    ], value_input_option="USER_ENTERED")
+                    executar_com_retry(
+                        sh_cat.append_row,
+                        [
+                            str(prox_num),
+                            np_cod.strip(),
+                            np_setor,
+                            np_prod.strip(),
+                            np_m1.strip() or "--",
+                            np_m2.strip() or "-",
+                            formatar_num_planilha(np_qtd, 3),
+                            np_unid,
+                            formatar_num_planilha(np_preco, 2),
+                            "TRUE"
+                        ],
+                        value_input_option="USER_ENTERED"
+                    )
+                    limpar_cache_dados()
                     st.session_state["msg_cat"] = f"✅ Produto '{np_prod}' cadastrado no {np_setor}!"
                     st.rerun()
 
@@ -1428,8 +1441,9 @@ elif menu == "6. Cadastro de Produtos":
                 formatar_num_planilha(safe_float(rc.get("PrecoRef", 0.0)), 2),
                 "TRUE" if safe_bool(rc.get("Ativo", True)) else "FALSE"
             ])
-        sh_cat.clear()
-        sh_cat.append_rows(linhas_c, value_input_option="USER_ENTERED")
+        executar_com_retry(sh_cat.clear)
+        executar_com_retry(sh_cat.append_rows, linhas_c, value_input_option="USER_ENTERED")
+        limpar_cache_dados()
         st.session_state["msg_cat"] = "✅ Catálogo de produtos atualizado com sucesso!"
         st.rerun()
-# === FIM DO CÓDIGO - VERSÃO v.1.0 ===
+# === FIM DO CÓDIGO - VERSÃO v.1.1 ===
