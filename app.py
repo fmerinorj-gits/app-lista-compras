@@ -1,4 +1,4 @@
-# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.2 ===
+# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.4 ===
 import math
 import time
 import streamlit as st
@@ -9,7 +9,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import gspread
 from google.oauth2.service_account import Credentials
 
-VERSAO_APP = "v.1.2"
+VERSAO_APP = "v.1.3"
 
 # Configuração de página idêntica ao padrão mobile/centered do App Luz & Água
 st.set_page_config(
@@ -131,7 +131,7 @@ def exibir_marca_limpa(marca_str):
         return "Sem marca específica"
     return m
 
-# === LISTA OFICIAL DOS DEPARTAMENTOS E DOS 83 PRODUTOS (CIRCUITO DO MERCADO) ===
+# === LISTA OFICIAL DOS DEPARTAMENTOS E DOS 84 PRODUTOS (CIRCUITO DO MERCADO) ===
 SETORES_OFICIAIS = [
     "💊 Antes do Mercado: Farmácia",
     "🥩 Setor A: Açougue/Salgados/Congelados",
@@ -151,9 +151,9 @@ SETORES_OFICIAIS = [
 # Tuplas: (Ordem, Codigo, Setor, Produto, Marca1, Marca2_Obs, QtdPadrao, Unidade)
 CATALOGO_INICIAL = [
     # 💊 ANTES DO MERCADO: FARMÁCIA
-    (1, "F1", "💊 Antes do Mercado: Farmácia", "Neosoro", "--", "-", 9.0, "Un"),
-    (2, "F2", "💊 Antes do Mercado: Farmácia", "Alprazolam 0,5mg", "--", "Cx 30 Comp", 1.0, "Cx (30 Comp)"),
-    (3, "F3", "💊 Antes do Mercado: Farmácia", "Bupropiona 150mg - 12H", "--", "Cx 30 Comp", 1.0, "Cx (30 Comp)"),
+    (1, "F1", "💊 Antes do Mercado: Farmácia", "Neosoro", "--", "-", 9.0, "Unidade"),
+    (2, "F2", "💊 Antes do Mercado: Farmácia", "Alprazolam 0,5mg", "--", "Caixa 30 Comprimidos", 1.0, "Caixa (30 Comprimidos)"),
+    (3, "F3", "💊 Antes do Mercado: Farmácia", "Bupropiona 150mg - 12H", "--", "Caixa 30 Comprimidos", 1.0, "Caixa (30 Comprimidos)"),
 
     # 🥩 SETOR A: AÇOUGUE / SALGADOS / CONGELADOS
     (4, "#62", "🥩 Setor A: Açougue/Salgados/Congelados", "Peito de Frango sem osso", "Sadia", "-", 4.0, "Kg"),
@@ -164,100 +164,101 @@ CATALOGO_INICIAL = [
     (9, "#70", "🥩 Setor A: Açougue/Salgados/Congelados", "Batata Pré Frita", "--", "-", 2.0, "Kg"),
 
     # 🧀 SETOR B: LATICÍNIOS / FRIOS
-    (10, "#58", "🧀 Setor B: Laticínios/Frios", "Requeijão Light", "Itambé", "200gr", 4.0, "Un"),
-    (11, "#59", "🧀 Setor B: Laticínios/Frios", "Requeijão Zero lactose", "Itambé", "200gr", 8.0, "Un"),
-    (12, "#60", "🧀 Setor B: Laticínios/Frios", "Iogurte Natural", "--", "-", 2.0, "Un"),
-    (13, "#9", "🧀 Setor B: Laticínios/Frios", "Leite Molico ou Desnatado", "--", "-", 14.0, "Lt"),
-    (14, "#10", "🧀 Setor B: Laticínios/Frios", "Leite sem Lactose – OU ADES sem sabor", "--", "-", 12.0, "Lt"),
+    (10, "#58", "🧀 Setor B: Laticínios/Frios", "Requeijão Light", "Itambé", "200gr", 4.0, "Unidade"),
+    (11, "#59", "🧀 Setor B: Laticínios/Frios", "Requeijão Zero lactose", "Itambé", "200gr", 8.0, "Unidade"),
+    (12, "#60", "🧀 Setor B: Laticínios/Frios", "Iogurte Natural", "--", "-", 2.0, "Unidade"),
+    (13, "#9", "🧀 Setor B: Laticínios/Frios", "Leite Molico ou Desnatado", "--", "-", 14.0, "Litro"),
+    (14, "#10", "🧀 Setor B: Laticínios/Frios", "Leite de sem Lactose ou de Soja", "--", "-", 12.0, "Litro"),
 
     # 🍞 SETOR C: PADARIA
-    (15, "#67", "🍞 Setor C: Padaria", "Pão de forma milho ou leite", "--", "-", 2.0, "Sc"),
-    (16, "#68", "🍞 Setor C: Padaria", "Pão de forma Integral 67%", "Wickbold", "-", 2.0, "Sc"),
+    (15, "#67", "🍞 Setor C: Padaria", "Pão de forma milho ou leite", "--", "-", 2.0, "Saco"),
+    (16, "#68", "🍞 Setor C: Padaria", "Pão de forma Integral 67%", "Wickbold", "-", 2.0, "Saco"),
 
     # ☕ SETOR D: FARELOS, CAFÉ
-    (17, "#44", "☕ Setor D: Farelos, Café", "Aveia em flocos ou farinha", "Quaker", "-", 2.0, "Cx"),
-    (18, "#35", "☕ Setor D: Farelos, Café", "Farinha Láctea", "Nestlé", "Genérica", 1.0, "Sc"),
-    (19, "#39", "☕ Setor D: Farelos, Café", "Ovomaltine", "--", "-", 1.0, "Sc"),
-    (20, "#71", "☕ Setor D: Farelos, Café", "Amido", "--", "-", 1.0, "Cx Pq"),
-    (21, "#72", "☕ Setor D: Farelos, Café", "Leite em pó integral", "--", "-", 1.0, "Sc/Un"),
-    (22, "#73", "☕ Setor D: Farelos, Café", "Café solúvel", "Matinal", "-", 1.0, "Sc/Un"),
-    (23, "#33", "☕ Setor D: Farelos, Café", "Pó de café", "Evoluto Premium", "pct 0,5 Kg", 1.0, "Pct (0,5Kg)"),
-    (24, "#34", "☕ Setor D: Farelos, Café", "Filtro de café - 102", "Melitta", "Pimpinela", 1.0, "Cx"),
-    (25, "#36", "☕ Setor D: Farelos, Café", "Erva Mate", "Leão", "Gr", 1.0, "Cx"),
+    (17, "#44", "☕ Setor D: Farelos, Café", "Aveia em flocos ou farinha", "Quaker", "-", 2.0, "Caixa"),
+    (18, "#35", "☕ Setor D: Farelos, Café", "Farinha Láctea", "Nestlé", "Genérica", 1.0, "Saco"),
+    (19, "#39", "☕ Setor D: Farelos, Café", "Ovomaltine", "--", "-", 1.0, "Saco"),
+    (20, "#71", "☕ Setor D: Farelos, Café", "Amido", "--", "-", 1.0, "Caixa Pequena"),
+    (21, "#72", "☕ Setor D: Farelos, Café", "Leite em pó integral", "--", "-", 1.0, "Saco / Unidade"),
+    (22, "#73", "☕ Setor D: Farelos, Café", "Café solúvel", "Matinal", "-", 1.0, "Saco / Unidade"),
+    (23, "#33", "☕ Setor D: Farelos, Café", "Pó de café", "Evoluto Premium", "Pacote 0,5 Kg", 1.0, "Pacote (0,5Kg)"),
+    (24, "#34", "☕ Setor D: Farelos, Café", "Filtro de café - 102", "Melitta", "Pimpinela", 1.0, "Caixa"),
+    (25, "#36", "☕ Setor D: Farelos, Café", "Erva Mate", "Leão", "Gr", 1.0, "Caixa"),
 
     # 🧄 SETOR E: HORTIFRUTI
-    (26, "#69", "🧄 Setor E: Hortifruti", "Alho", "Cabeça", "-", 4.0, "Un"),
+    (26, "#69", "🧄 Setor E: Hortifruti", "Alho", "Cabeça", "-", 4.0, "Unidade"),
 
     # 🍪 SETOR F: DOCES, COMPLEMENTOS E BISCOITOS
     (27, "#74", "🍪 Setor F: Doces, Complementos e Biscoitos", "Fermento em pó", "Royal", "-", 1.0, "Pote"),
-    (28, "#42", "🍪 Setor F: Doces, Complementos e Biscoitos", "Geleia - Uva - Pêssego - Morango - Damasco", "Ritter", "Predilecta", 3.0, "Un"),
-    (29, "#43", "🍪 Setor F: Doces, Complementos e Biscoitos", "Goiabada Fina – Não cascão", "Predilecta", "-", 1.0, "Un"),
-    (30, "#40", "🍪 Setor F: Doces, Complementos e Biscoitos", "Creme de Leite SEM LACTOSE", "--", "-", 1.0, "Cx"),
-    (31, "#41", "🍪 Setor F: Doces, Complementos e Biscoitos", "Leite Condensado SEM LACTOSE", "--", "-", 1.0, "Cx"),
-    (32, "#75", "🍪 Setor F: Doces, Complementos e Biscoitos", "Coco ralado", "Sococo", "-", 1.0, "Sc"),
-    (33, "#37", "🍪 Setor F: Doces, Complementos e Biscoitos", "Biscoito Cristal", "Marilan", "(3X Econômico)", 1.0, "Pct"),
-    (34, "#38", "🍪 Setor F: Doces, Complementos e Biscoitos", "Biscoito Maisena", "--", "-", 1.0, "Pct"),
+    (28, "#42", "🍪 Setor F: Doces, Complementos e Biscoitos", "Geleia - Uva - Pêssego - Morango - Damasco", "Ritter", "Predilecta", 3.0, "Unidade"),
+    (29, "#43", "🍪 Setor F: Doces, Complementos e Biscoitos", "Goiabada Fina – Não cascão", "Predilecta", "-", 1.0, "Unidade"),
+    (30, "#40", "🍪 Setor F: Doces, Complementos e Biscoitos", "Creme de Leite SEM LACTOSE", "--", "-", 1.0, "Caixa"),
+    (31, "#41", "🍪 Setor F: Doces, Complementos e Biscoitos", "Leite Condensado SEM LACTOSE", "--", "-", 1.0, "Caixa"),
+    (32, "#75", "🍪 Setor F: Doces, Complementos e Biscoitos", "Coco ralado", "Sococo", "-", 1.0, "Saco"),
+    (33, "#37", "🍪 Setor F: Doces, Complementos e Biscoitos", "Biscoito Cristal", "Marilan", "(3X Econômico)", 1.0, "Pacote"),
+    (34, "#38", "🍪 Setor F: Doces, Complementos e Biscoitos", "Biscoito Maisena", "--", "-", 1.0, "Pacote"),
 
     # 🪥 SETOR G: HIGIENE PESSOAL E PERFUMARIA
-    (35, "#28", "🪥 Setor G: Higiene Pessoal e Perfumaria", "Creme dental", "Sensodyne “Original”", "-", 1.0, "Tb"),
-    (36, "#29", "🪥 Setor G: Higiene Pessoal e Perfumaria", "Shampoo Seda roxo", "Individual", "Kit?", 1.0, "Un/Kit"),
-    (37, "#30", "🪥 Setor G: Higiene Pessoal e Perfumaria", "Condicionador Seda roxo", "Individual", "Kit?", 1.0, "Un"),
-    (38, "#31", "🪥 Setor G: Higiene Pessoal e Perfumaria", "Sabonete", "Protex", "Erva Doce", 8.0, "Un"),
-    (39, "#32", "🪥 Setor G: Higiene Pessoal e Perfumaria", "Cotonetes", "Johnson’s", "-", 1.0, "Cx"),
-    (40, "#76", "🪥 Setor G: Higiene Pessoal e Perfumaria", "Desodorante Sem perfume", "--", "-", 1.0, "Lt"),
-    (41, "#77", "🪥 Setor G: Higiene Pessoal e Perfumaria", "Escova Dental", "--", "-", 1.0, "Un"),
+    (35, "#28", "🪥 Setor G: Higiene Pessoal e Perfumaria", "Creme dental", "Sensodyne “Original”", "-", 1.0, "Tubo"),
+    (36, "#29", "🪥 Setor G: Higiene Pessoal e Perfumaria", "Shampoo Seda roxo", "Individual", "Kit?", 1.0, "Unidade / Kit"),
+    (37, "#30", "🪥 Setor G: Higiene Pessoal e Perfumaria", "Condicionador Seda roxo", "Individual", "Kit?", 1.0, "Unidade"),
+    (38, "#31", "🪥 Setor G: Higiene Pessoal e Perfumaria", "Sabonete", "Protex", "Erva Doce", 8.0, "Unidade"),
+    (39, "#32", "🪥 Setor G: Higiene Pessoal e Perfumaria", "Cotonetes", "Johnson’s", "-", 1.0, "Caixa"),
+    (40, "#76", "🪥 Setor G: Higiene Pessoal e Perfumaria", "Desodorante Sem perfume", "--", "-", 1.0, "Lata"),
+    (41, "#77", "🪥 Setor G: Higiene Pessoal e Perfumaria", "Escova Dental", "--", "-", 1.0, "Unidade"),
 
     # 🧻 SETOR H: SACOS, PAPÉIS E DESCARTÁVEIS
-    (42, "#78", "🧻 Setor H: Sacos, Papéis e Descartáveis", "Pastilhas Pato Purific", "Limão", "-", 1.0, "Cx"),
-    (43, "#23", "🧻 Setor H: Sacos, Papéis e Descartáveis", "Rolo de Sacos", "29cm", "-", 1.0, "Rol"),
-    (44, "#24", "🧻 Setor H: Sacos, Papéis e Descartáveis", "Papel Toalha", "Snob", "Social", 1.0, "Pct"),
+    (42, "#78", "🧻 Setor H: Sacos, Papéis e Descartáveis", "Pastilhas Pato Purific", "Limão", "-", 1.0, "Caixa"),
+    (43, "#23", "🧻 Setor H: Sacos, Papéis e Descartáveis", "Rolo de Sacos", "29cm", "-", 1.0, "Rolo"),
+    (44, "#24", "🧻 Setor H: Sacos, Papéis e Descartáveis", "Papel Toalha", "Snob", "Social", 1.0, "Pacote"),
     (45, "#25", "🧻 Setor H: Sacos, Papéis e Descartáveis", "Filme PVC - 30 mts - Sem picotes", "--", "-", 1.0, "Rolo"),
     (46, "#26", "🧻 Setor H: Sacos, Papéis e Descartáveis", "Papel Hig. – Personal VIP - Mimmo (Urso Bege c/Lilás)", "--", "-", 16.0, "Rolo"),
 
     # 🧼 SETOR I: LIMPEZA
-    (47, "#13", "🧼 Setor I: Limpeza", "Cloro (não água sanitária)", "Pró Water", "-", 2.0, "Lt"),
-    (48, "#14", "🧼 Setor I: Limpeza", "“Cheirinho” para chão", "Casa & Perfume", "-", 1.0, "Vd"),
-    (49, "#16", "🧼 Setor I: Limpeza", "Sabão de coco neutro", "Ypê", "Palmeira", 1.0, "Un"),
+    (47, "#13", "🧼 Setor I: Limpeza", "Cloro (não água sanitária)", "Pró Water", "-", 2.0, "Litro"),
+    (48, "#14", "🧼 Setor I: Limpeza", "“Cheirinho” para chão", "Casa & Perfume", "-", 1.0, "Vidro"),
+    (49, "#16", "🧼 Setor I: Limpeza", "Sabão de coco neutro", "Ypê", "Palmeira", 1.0, "Unidade"),
     (50, "#17", "🧼 Setor I: Limpeza", "Desengordurante", "Veja", "Cif", 1.0, "Refil"),
-    (51, "#18", "🧼 Setor I: Limpeza", "Sapólio Radium – Cloro pó", "--", "-", 1.0, "Un"),
-    (52, "#27", "🧼 Setor I: Limpeza", "Álcool com Eucalipto", "--", "-", 1.0, "Lt"),
-    (53, "#15", "🧼 Setor I: Limpeza", "Detergente - Transparente", "Ypê", "-", 3.0, "Un"),
+    (51, "#18", "🧼 Setor I: Limpeza", "Sapólio Radium – Cloro pó", "--", "-", 1.0, "Unidade"),
+    (52, "#27", "🧼 Setor I: Limpeza", "Álcool com Eucalipto", "--", "-", 1.0, "Litro"),
+    (53, "#15", "🧼 Setor I: Limpeza", "Detergente - Transparente", "Ypê", "-", 3.0, "Unidade"),
     (54, "#11", "🧼 Setor I: Limpeza", "Sabão em pó AZUL", "Ypê", "-", 2.0, "Kg"),
-    (55, "#12", "🧼 Setor I: Limpeza", "Amaciante Confort Concent.", "Bebê Hipoalergênico", "frasco 0,5 Lt", 1.0, "Frasco (0,5Lt)"),
-    (56, "#19", "🧼 Setor I: Limpeza", "Bombril", "--", "-", 1.0, "Sq"),
-    (57, "#20", "🧼 Setor I: Limpeza", "Pano de Pia - Amarelo", "3M", "-", 1.0, "Sq"),
-    (58, "#21", "🧼 Setor I: Limpeza", "Esponja 3 ou 4 unidades", "Ypê", "3M", 1.0, "Sq"),
-    (59, "#22", "🧼 Setor I: Limpeza", "Saco de Lixo", "50 Lts.", "100 Lts.", 1.0, "Pct"),
+    (55, "#12", "🧼 Setor I: Limpeza", "Amaciante Confort Concent.", "Bebê Hipoalergênico", "Frasco 0,5 Litro", 1.0, "Frasco (0,5 Litro)"),
+    (56, "#19", "🧼 Setor I: Limpeza", "Bombril", "--", "-", 1.0, "Saquinho"),
+    (57, "#20", "🧼 Setor I: Limpeza", "Pano de Pia - Amarelo", "3M", "-", 1.0, "Saquinho"),
+    (58, "#21", "🧼 Setor I: Limpeza", "Esponja 3 ou 4 unidades", "Ypê", "3M", 1.0, "Saquinho"),
+    (59, "#22A", "🧼 Setor I: Limpeza", "Saco de Lixo", "+Forte Reforçado - 50 Lts.", "-", 1.0, "Pacote"),
+    (60, "#22B", "🧼 Setor I: Limpeza", "Saco de Lixo", "+Forte Reforçado - 100 Lts.", "-", 1.0, "Pacote"),
 
     # 🥫 SETOR J: MERCEARIA (LATAS E CONDIMENTOS)
-    (60, "#66", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Colorau", "--", "-", 1.0, "Sq"),
-    (61, "#45", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Maionese (com bico)", "Hellmann's", "Heinz (2 Pq / 1 Gr / Pote)", 1.0, "Un"),
-    (62, "#46", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Atum – Água (Light) - Sólido", "Gomes da Costa", "-", 2.0, "Lt"),
-    (63, "#47", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Óleo de soja", "--", "-", 1.0, "Lt"),
-    (64, "#48", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Vinagre de Maçã", "--", "-", 1.0, "Lt"),
-    (65, "#49", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Azeite de Oliva 0,2% ou 0,5%", "Andorinha", "Gallo", 1.0, "Vd"),
-    (66, "#50", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Milho em lata", "Pramesa", "Predilecta", 2.0, "Lt"),
-    (67, "#51", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Molho Shoyo Premium", "Sakura", "Ajinoshoyo", 1.0, "Pote"),
-    (68, "#52", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Ketchup - Sem pimenta", "Pramesa", "Hellmann's", 1.0, "Un"),
-    (69, "#53", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Mostarda", "Pramesa", "Hellmann's", 1.0, "Un"),
-    (70, "#54", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Champignon", "Pramesa", "1 Pq", 1.0, "Vd"),
-    (71, "#55", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Batata Palha – não fina", "Elma Chips", "Sacos GR", 3.0, "Sq"),
-    (72, "#56", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Macarrão de Arroz", "Urbano", "-", 1.0, "Kg"),
-    (73, "#57", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Queijo ralado", "Vigor", "Président (100g)", 1.0, "Un (100g)"),
+    (61, "#66", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Colorau", "--", "-", 1.0, "Saquinho"),
+    (62, "#45", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Maionese (com bico)", "Hellmann's", "Heinz (2 Pequenas / 1 Grande / Pote)", 1.0, "Unidade"),
+    (63, "#46", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Atum – Água (Light) - Sólido", "Gomes da Costa", "-", 2.0, "Lata"),
+    (64, "#47", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Óleo de soja", "--", "-", 1.0, "Litro"),
+    (65, "#48", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Vinagre de Maçã", "--", "-", 1.0, "Litro"),
+    (66, "#49", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Azeite de Oliva 0,2% ou 0,5%", "Andorinha", "Gallo", 1.0, "Vidro"),
+    (67, "#50", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Milho em lata", "Pramesa", "Predilecta", 2.0, "Lata"),
+    (68, "#51", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Molho Shoyo Premium", "Sakura", "Ajinoshoyo", 1.0, "Pote"),
+    (69, "#52", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Ketchup - Sem pimenta", "Pramesa", "Hellmann's", 1.0, "Unidade"),
+    (70, "#53", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Mostarda", "Pramesa", "Hellmann's", 1.0, "Unidade"),
+    (71, "#54", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Champignon", "Pramesa", "1 Pequeno", 1.0, "Vidro"),
+    (72, "#55", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Batata Palha – não fina", "Elma Chips", "Sacos Grandes", 3.0, "Saquinho"),
+    (73, "#56", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Macarrão de Arroz", "Urbano", "-", 1.0, "Kg"),
+    (74, "#57", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Queijo ralado", "Vigor", "Président (100g)", 1.0, "Unidade (100g)"),
 
     # 🌾 SETOR K: MERCEARIA (GRÃOS)
-    (74, "#1", "🌾 Setor K: Mercearia (Grãos)", "Arroz Branco", "Tio João", "Tio Mingote", 5.0, "Kg"),
-    (75, "#2", "🌾 Setor K: Mercearia (Grãos)", "Feijão manteiga ou vermelho", "--", "pct 0,5 Kg", 1.0, "Pct (0,5Kg)"),
-    (76, "#3", "🌾 Setor K: Mercearia (Grãos)", "Feijão Branco", "--", "pct 0,5 Kg", 1.0, "Pct (0,5Kg)"),
-    (77, "#4", "🌾 Setor K: Mercearia (Grãos)", "Feijão preto", "Tio João", "Máximo (pct 0,5 Kg)", 1.0, "Pct (0,5Kg)"),
-    (78, "#5", "🌾 Setor K: Mercearia (Grãos)", "Farinha de Mesa Fina Torrada", "Granfino", "pct 0,5 Kg", 1.0, "Pct (0,5Kg)"),
-    (79, "#6", "🌾 Setor K: Mercearia (Grãos)", "Farinha de Trigo (sem fermento)", "D. Benta", "Boa Sorte", 1.0, "Kg"),
-    (80, "#7", "🌾 Setor K: Mercearia (Grãos)", "Milharina ou Fubá Mimoso", "Granfino", "pct 0,5 Kg", 1.0, "Pct (0,5Kg)"),
-    (81, "#8", "🌾 Setor K: Mercearia (Grãos)", "Açúcar", "União", "Neve", 3.0, "Kg"),
+    (75, "#1", "🌾 Setor K: Mercearia (Grãos)", "Arroz Branco", "Tio João", "Tio Mingote", 5.0, "Kg"),
+    (76, "#2", "🌾 Setor K: Mercearia (Grãos)", "Feijão manteiga ou vermelho", "--", "Pacote 0,5 Kg", 1.0, "Pacote (0,5Kg)"),
+    (77, "#3", "🌾 Setor K: Mercearia (Grãos)", "Feijão Branco", "--", "Pacote 0,5 Kg", 1.0, "Pacote (0,5Kg)"),
+    (78, "#4", "🌾 Setor K: Mercearia (Grãos)", "Feijão preto", "Tio João", "Máximo (Pacote 0,5 Kg)", 1.0, "Pacote (0,5Kg)"),
+    (79, "#5", "🌾 Setor K: Mercearia (Grãos)", "Farinha de Mesa Fina Torrada", "Granfino", "Pacote 0,5 Kg", 1.0, "Pacote (0,5Kg)"),
+    (80, "#6", "🌾 Setor K: Mercearia (Grãos)", "Farinha de Trigo (sem fermento)", "D. Benta", "Boa Sorte", 1.0, "Kg"),
+    (81, "#7", "🌾 Setor K: Mercearia (Grãos)", "Milharina ou Fubá Mimoso", "Granfino", "Pacote 0,5 Kg", 1.0, "Pacote (0,5Kg)"),
+    (82, "#8", "🌾 Setor K: Mercearia (Grãos)", "Açúcar", "União", "Neve", 3.0, "Kg"),
 
     # ➕ SETOR L: EXTRAS (SOMADOS AO MERCADO)
-    (82, "#E1", "➕ Setor L: Extras", "Soja clara pequena - PTS", "--", "-", 1.0, "Kg"),
-    (83, "#E2", "➕ Setor L: Extras", "Refil Filtro Cozinha", "--", "-", 2.0, "Un")
+    (83, "#E1", "➕ Setor L: Extras", "Soja clara pequena - PTS", "--", "-", 1.0, "Kg"),
+    (84, "#E2", "➕ Setor L: Extras", "Refil Filtro Cozinha", "--", "-", 2.0, "Unidade")
 ]
 
 COLUNAS_CATALOGO = [
@@ -371,6 +372,27 @@ def obter_aba_catalogo(ano_str=None):
         vals = executar_com_retry(sheet.get_values)
         if len(vals) <= 1:
             raise gspread.WorksheetNotFound("Catálogo vazio")
+        # Migração automática para v.1.3 (atualiza unidades por extenso, Leite Soja e Saco de Lixo 50L/100L preservando preços)
+        codigos_atuais = {str(r[1]).strip() for r in vals[1:] if len(r) > 1}
+        if "#22A" not in codigos_atuais or any(len(r) > 7 and r[7] in ["Un", "Lt", "Pct", "Cx", "Sc", "Sq", "Vd", "Tb", "Rol"] for r in vals[1:]):
+            precos_antigos = {str(r[1]).strip(): (r[8] if len(r) > 8 else "0,00") for r in vals[1:] if len(r) > 1}
+            if "#22" in precos_antigos and "#22A" not in precos_antigos:
+                precos_antigos["#22A"] = precos_antigos["#22"]
+                precos_antigos["#22B"] = precos_antigos["#22"]
+            linhas_mig = [COLUNAS_CATALOGO]
+            cods_oficiais = {it[1] for it in CATALOGO_INICIAL}
+            for item in CATALOGO_INICIAL:
+                ordem, cod, setor, prod, m1, m2, qtd_p, unid = item
+                pr_salvo = precos_antigos.get(cod, "0,00")
+                linhas_mig.append([
+                    str(ordem), cod, setor, prod, m1, m2,
+                    formatar_num_planilha(qtd_p, 3), unid, pr_salvo, "TRUE"
+                ])
+            for r in vals[1:]:
+                if len(r) > 1 and str(r[1]).strip() not in cods_oficiais and str(r[1]).strip() != "#22":
+                    linhas_mig.append(r[:len(COLUNAS_CATALOGO)])
+            executar_com_retry(sheet.clear)
+            executar_com_retry(sheet.append_rows, linhas_mig, value_input_option="USER_ENTERED")
         return sheet
     except gspread.WorksheetNotFound:
         try:
@@ -473,8 +495,30 @@ def ler_dados_aba_mes_cached(mes_ano_str, ano_str=None):
         if c not in df.columns:
             df[c] = ""
 
-    # Sincroniza novos produtos do Catálogo que ainda não estejam na aba do mês
+    # Sincroniza nomes/unidades/ordem do Catálogo v.1.3 e remove o antigo #22 unificado se #22A/#22B entrarem
     df_cat = carregar_df_catalogo(ano_str)
+    if "#22" in df["Codigo"].astype(str).str.strip().values:
+        df = df[df["Codigo"].astype(str).str.strip() != "#22"].copy()
+
+    mapa_cat_meta = {str(rc["Codigo"]).strip(): rc for _, rc in df_cat.iterrows()}
+    precisa_salvar_migracao = False
+    for idx_m, rm in df.iterrows():
+        c_m = str(rm["Codigo"]).strip()
+        if c_m in mapa_cat_meta:
+            rc_ref = mapa_cat_meta[c_m]
+            if (str(rm["Produto"]) != str(rc_ref["Produto"]) or
+                str(rm["Unidade"]) != str(rc_ref["Unidade"]) or
+                str(rm["Marca1"]) != str(rc_ref["Marca1"]) or
+                str(rm["Marca2"]) != str(rc_ref["Marca2"]) or
+                str(rm["Ordem"]) != str(int(rc_ref["Ordem_num"]))):
+                df.at[idx_m, "Ordem"] = str(int(rc_ref["Ordem_num"]))
+                df.at[idx_m, "Setor"] = str(rc_ref["Setor"])
+                df.at[idx_m, "Produto"] = str(rc_ref["Produto"])
+                df.at[idx_m, "Marca1"] = str(rc_ref["Marca1"])
+                df.at[idx_m, "Marca2"] = str(rc_ref["Marca2"])
+                df.at[idx_m, "Unidade"] = str(rc_ref["Unidade"])
+                precisa_salvar_migracao = True
+
     codigos_mes = set(df["Codigo"].astype(str).str.strip().tolist())
     novas_linhas = []
     for _, rc in df_cat[df_cat["Ativo_bool"]].iterrows():
@@ -501,6 +545,7 @@ def ler_dados_aba_mes_cached(mes_ano_str, ano_str=None):
                 "ObsMes": ""
             }
             novas_linhas.append(nova)
+            precisa_salvar_migracao = True
     if novas_linhas:
         df = pd.concat([df, pd.DataFrame(novas_linhas)], ignore_index=True)
 
@@ -512,6 +557,13 @@ def ler_dados_aba_mes_cached(mes_ano_str, ano_str=None):
     df["QtdComprada_num"] = df["QtdComprada"].apply(safe_float)
     df["PrecoRealUnit_num"] = df["PrecoRealUnit"].apply(safe_float)
     df = df.sort_values("Ordem_num").reset_index(drop=True)
+
+    if precisa_salvar_migracao:
+        try:
+            salvar_df_mes(sheet, df, ano_str, atualizar_preco_catalogo=False)
+        except Exception:
+            pass
+
     return df
 
 def carregar_df_mes(mes_ano_str, ano_str=None):
@@ -834,18 +886,18 @@ if menu == "1. Planejamento (Casa)":
                 av_m1 = st.text_input("Marca 1 (ou deixe em branco p/ Sem marca)", value="--")
             with ca2:
                 av_qtd = st.number_input("Quantidade", min_value=0.1, value=1.0, step=0.5, format="%.2f")
-                av_unid = st.text_input("Unidade (Un, Kg, Pct, Cx, Lt...)", value="Un")
+                av_unid = st.text_input("Unidade (Unidade, Kg, Pacote, Caixa, Litro...)", value="Unidade")
                 av_preco = st.number_input("Preço Unit. Estimado (R$)", min_value=0.0, value=0.0, step=0.5, format="%.2f")
             if st.form_submit_button("Inserir Item Avulso já Marcado (🔵)", use_container_width=True):
                 if av_prod.strip():
-                    nova_ordem = int(df_mes["Ordem_num"].max() + 1) if not df_mes.empty else 84
+                    nova_ordem = int(df_mes["Ordem_num"].max() + 1) if not df_mes.empty else 85
                     novo_cod = f"#AV{nova_ordem}"
                     sub_av = arredondar_moeda(av_qtd * av_preco, 2)
                     executar_com_retry(
                         sheet_mes.append_row,
                         [
                             str(nova_ordem), novo_cod, av_setor, av_prod.strip(),
-                            av_m1.strip() or "--", "Avulso do Mês", av_unid.strip() or "Un",
+                            av_m1.strip() or "--", "Avulso do Mês", av_unid.strip() or "Unidade",
                             "TRUE", formatar_num_planilha(av_qtd, 3), formatar_num_planilha(av_preco, 2),
                             formatar_num_planilha(sub_av, 2),
                             "FALSE", formatar_num_planilha(av_qtd, 3), formatar_num_planilha(av_preco, 2),
@@ -881,7 +933,7 @@ if menu == "1. Planejamento (Casa)":
                 pr_atual = float(row["PrecoUnit_num"])
 
                 st.markdown(
-                    f"**{prod}** <span class='item-sub'>({cod}) — Marca: <b>{m1}</b>{m2_txt} | Unid: <b>{unid}</b></span>",
+                    f"**{prod}** <span class='item-sub'>— Marca: <b>{m1}</b>{m2_txt} | Unid: <b>{unid}</b></span>",
                     unsafe_allow_html=True
                 )
                 c1, c2, c3 = st.columns([1.4, 1.1, 1.2])
@@ -1048,7 +1100,7 @@ elif menu == "2. Conferência (Mercado)":
 
                 badge_plan = "🔵 Planejado" if row["Planejado_bool"] else "⚪ Extra não planejado"
                 st.markdown(
-                    f"**{prod}** <span class='item-sub'>({cod} • {badge_plan}) — Marca: <b>{m1}{m2_txt}</b> | Planejado: <b>{formatar_qtd_br(row['QtdPlanejada_num'])} {unid}</b></span>",
+                    f"**{prod}** <span class='item-sub'>({badge_plan}) — Marca: <b>{m1}{m2_txt}</b> | Planejado: <b>{formatar_qtd_br(row['QtdPlanejada_num'])} {unid}</b></span>",
                     unsafe_allow_html=True
                 )
 
@@ -1279,11 +1331,10 @@ elif menu == "4. Tabela de Preços do Mês":
 
     df_editor_pr = pd.DataFrame({
         "idx_orig": df_pr_view.index,
-        "Código": df_pr_view["Codigo"],
         "Setor": df_pr_view["Setor"],
         "Produto": df_pr_view["Produto"],
         "Marca 1": df_pr_view["Marca1"].apply(exibir_marca_limpa),
-        "Unid.": df_pr_view["Unidade"],
+        "Unidade": df_pr_view["Unidade"],
         "Qtd Padrão": df_pr_view["QtdPlanejada_num"].apply(formatar_qtd_br),
         "Preço Unit. (R$)": df_pr_view["PrecoUnit_num"].apply(lambda v: f"{safe_float(v):.2f}".replace(".", ","))
     })
@@ -1292,7 +1343,7 @@ elif menu == "4. Tabela de Preços do Mês":
         df_editor_pr,
         hide_index=True,
         use_container_width=True,
-        disabled=["idx_orig", "Código", "Setor", "Produto", "Marca 1", "Unid.", "Qtd Padrão"],
+        disabled=["idx_orig", "Setor", "Produto", "Marca 1", "Unidade", "Qtd Padrão"],
         column_config={
             "idx_orig": None,
             "Preço Unit. (R$)": st.column_config.TextColumn("Preço Unit. (R$)", help="Digite ex: 5 ou 35,00 ou 35.50")
@@ -1390,12 +1441,16 @@ elif menu == "6. Cadastro de Produtos":
                 np_m1 = st.text_input("Marca 1 (use '--' para Sem marca específica):", value="--")
                 np_m2 = st.text_input("Marca 2 / Observação:", value="-")
             with c2:
-                prox_num = int(df_cat_atual["Ordem_num"].max() + 1) if not df_cat_atual.empty else 84
-                np_cod = st.text_input("Código do Item:", value=f"#{prox_num}")
+                prox_num = int(df_cat_atual["Ordem_num"].max() + 1) if not df_cat_atual.empty else 85
                 np_qtd = st.number_input("Quantidade Padrão Mensal:", min_value=0.1, value=1.0, step=0.5, format="%.2f")
                 np_unid = st.selectbox(
                     "Unidade / Métrica:",
-                    ["Un", "Kg", "Lt", "Pct", "Pct (0,5Kg)", "Cx", "Cx Pq", "Sc", "Sc/Un", "Vd", "Refil", "Rolo", "Rol", "Sq", "Tb", "Pote", "Bifes", "Cx (30 Comp)", "Frasco (0,5Lt)", "Un (100g)", "Un/Kit"]
+                    [
+                        "Unidade", "Kg", "Litro", "Lata", "Pacote", "Pacote (0,5Kg)",
+                        "Caixa", "Caixa Pequena", "Saco", "Saco / Unidade", "Vidro",
+                        "Refil", "Rolo", "Saquinho", "Tubo", "Pote", "Bifes",
+                        "Caixa (30 Comprimidos)", "Frasco (0,5 Litro)", "Unidade (100g)", "Unidade / Kit"
+                    ]
                 )
                 np_preco = st.number_input("Preço Unitário de Referência (R$):", min_value=0.0, value=0.0, step=0.50, format="%.2f")
 
@@ -1408,7 +1463,7 @@ elif menu == "6. Cadastro de Produtos":
                         sh_cat.append_row,
                         [
                             str(prox_num),
-                            np_cod.strip(),
+                            f"#{prox_num}",
                             np_setor,
                             np_prod.strip(),
                             np_m1.strip() or "--",
@@ -1446,6 +1501,7 @@ elif menu == "6. Cadastro de Produtos":
         use_container_width=True,
         num_rows="dynamic",
         column_config={
+            "Codigo": None,
             "Ordem": st.column_config.NumberColumn("Ordem", min_value=1, step=1),
             "Setor": st.column_config.SelectboxColumn("Setor", options=SETORES_OFICIAIS, required=True),
             "QtdPadrao": st.column_config.NumberColumn("Qtd Padrão", min_value=0.1, step=0.5, format="%.2f"),
@@ -1478,4 +1534,4 @@ elif menu == "6. Cadastro de Produtos":
         limpar_cache_dados()
         st.session_state["msg_cat"] = "✅ Catálogo de produtos atualizado com sucesso!"
         st.rerun()
-# === FIM DO CÓDIGO - VERSÃO v.1.2 ===
+# === FIM DO CÓDIGO - VERSÃO v.1.4 ===
