@@ -1,4 +1,4 @@
-# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.15.1 ===
+# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.16 ===
 import base64
 import math
 import time
@@ -10,7 +10,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import gspread
 from google.oauth2.service_account import Credentials
 
-VERSAO_APP = "v.1.15.1"
+VERSAO_APP = "v.1.16"
 
 # Configuração de página idêntica ao padrão mobile/centered do App Luz & Água
 st.set_page_config(
@@ -369,7 +369,8 @@ COLUNAS_RESUMO = [
     "TotalFarmaciaPlanejado", "TotalFarmaciaReal",
     "Dinheiro", "BradescoDebito", "BradescoCredito",
     "MercadoPagoDebito", "MercadoPagoCredito", "NubankDebito", "NubankCredito",
-    "PagamentoFarmacia", "ObsFechamento"
+    "PagamentoFarmacia", "ObsFechamento",
+    "TranspIdaPag", "TranspIdaVal", "TranspVoltaPag", "TranspVoltaVal"
 ]
 
 # === CONEXÃO COM GOOGLE SHEETS (GSPREAD) COM CACHE E PROTEÇÃO ANTI-QUOTA ===
@@ -404,6 +405,26 @@ def get_spreadsheet_por_ano(ano_str=None):
         return executar_com_retry(client.open, nome_alvo)
     except gspread.SpreadsheetNotFound:
         return executar_com_retry(client.open, "Compras 2026")
+
+@st.cache_data(ttl=600, show_spinner=False)
+def listar_anos_disponiveis_gdrive():
+    """
+    Descobre automaticamente todos os arquivos 'Compras AAAA' criados na pasta do Google Drive.
+    Se você criar 'Compras 2031', 'Compras 2032', etc., a lista de Mês/Ano cresce sozinha!
+    """
+    anos = set(range(2026, max(2031, int(agora_br().strftime("%Y")) + 2)))
+    try:
+        client = get_gspread_client()
+        arquivos = executar_com_retry(client.list_spreadsheet_files)
+        for arq in arquivos:
+            nome = str(arq.get("name", "")).strip()
+            if nome.startswith("Compras "):
+                partes = nome.split(" ")
+                if len(partes) >= 2 and partes[-1].isdigit() and len(partes[-1]) == 4:
+                    anos.add(int(partes[-1]))
+    except Exception:
+        pass
+    return sorted(list(anos))
 
 def limpar_cache_dados():
     """Limpa o cache em memória sempre que algum dado é salvo na planilha."""
@@ -754,7 +775,7 @@ def salvar_df_mes(sheet_ou_mes_ano, df_mes, ano_str=None, atualizar_preco_catalo
 def salvar_resumo_pagamento(mes_ano_str, dados_resumo_dict, ano_str=None):
     sh_res = obter_aba_resumo_mensal(ano_str)
     vals = executar_com_retry(sh_res.get_values)
-    cabecalho = vals[0] if len(vals) > 0 else COLUNAS_RESUMO
+    cabecalho = COLUNAS_RESUMO
     linhas = [cabecalho]
     encontrou = False
 
@@ -772,8 +793,12 @@ def salvar_resumo_pagamento(mes_ano_str, dados_resumo_dict, ano_str=None):
         formatar_num_planilha(dados_resumo_dict.get("MercadoPagoCredito", 0.0), 2),
         formatar_num_planilha(dados_resumo_dict.get("NubankDebito", 0.0), 2),
         formatar_num_planilha(dados_resumo_dict.get("NubankCredito", 0.0), 2),
-        str(dados_resumo_dict.get("PagamentoFarmacia", "")),
-        str(dados_resumo_dict.get("ObsFechamento", ""))
+        str(dados_resumo_dict.get("PagamentoFarmacia", "Dinheiro")),
+        str(dados_resumo_dict.get("ObsFechamento", "")),
+        str(dados_resumo_dict.get("TranspIdaPag", "Não houve")),
+        formatar_num_planilha(dados_resumo_dict.get("TranspIdaVal", 0.0), 2),
+        str(dados_resumo_dict.get("TranspVoltaPag", "Não houve")),
+        formatar_num_planilha(dados_resumo_dict.get("TranspVoltaVal", 0.0), 2)
     ]
 
     if len(vals) > 1:
@@ -812,8 +837,12 @@ def obter_resumo_mes(mes_ano_str, ano_str=None):
                         "MercadoPagoCredito": safe_float(r[10]) if len(r) > 10 else 0.0,
                         "NubankDebito": safe_float(r[11]) if len(r) > 11 else 0.0,
                         "NubankCredito": safe_float(r[12]) if len(r) > 12 else 0.0,
-                        "PagamentoFarmacia": r[13] if len(r) > 13 else "",
-                        "ObsFechamento": r[14] if len(r) > 14 else ""
+                        "PagamentoFarmacia": r[13] if len(r) > 13 and r[13] else "Dinheiro",
+                        "ObsFechamento": r[14] if len(r) > 14 else "",
+                        "TranspIdaPag": r[15] if len(r) > 15 and r[15] else "Não houve",
+                        "TranspIdaVal": safe_float(r[16]) if len(r) > 16 else 0.0,
+                        "TranspVoltaPag": r[17] if len(r) > 17 and r[17] else "Não houve",
+                        "TranspVoltaVal": safe_float(r[18]) if len(r) > 18 else 0.0
                     }
     except Exception:
         pass
@@ -877,9 +906,10 @@ if "mes_ano_ativo_mem" not in st.session_state:
 mes_ano_ativo = st.session_state["mes_ano_ativo_mem"]
 ano_ativo = mes_ano_ativo.split(" ")[-1]
 
-# Lista de meses disponíveis (começando em 11 2026, mantendo 10 2026 ao final caso queira consultar)
+# Lista de meses dinâmica: cresce automaticamente conforme novos arquivos "Compras AAAA" existam no GDrive!
+anos_disponiveis = listar_anos_disponiveis_gdrive()
 opcoes_meses = []
-for a in range(2026, 2031):
+for a in anos_disponiveis:
     for m in range(1, 13):
         if a == 2026 and m < 11:
             continue
@@ -952,32 +982,72 @@ if st.session_state.get("fechar_menu_agora", False):
         height=0
     )
 
-# Script leve para garantir que os Checkboxes marcados e os Radios "Comprar" fiquem 100% Verdes (#2ECC71) em qualquer navegador
+# Observador JavaScript ativo no documento principal: força cor VERDE (#2ECC71) diretamente nos elementos marcados
+# ("Comprar" no Planejamento e "Comprado" na Conferência), superando qualquer estilo nativo do Streamlit
 components.html(
     """
     <script>
     (function() {
         try {
             const doc = window.parent.document;
-            let styleEl = doc.getElementById('estilo-verde-compras');
-            if (!styleEl) {
-                styleEl = doc.createElement('style');
-                styleEl.id = 'estilo-verde-compras';
-                styleEl.innerHTML = `
-                    label[data-baseweb="checkbox"]:has(input:checked) > span:first-of-type {
-                        background-color: #2ECC71 !important;
-                        border-color: #2ECC71 !important;
+
+            function aplicarCoresVerdes() {
+                // 1. Checkboxes ("Comprado", etc.) -> Ficam Verdes (#2ECC71) quando marcados
+                const checkboxes = doc.querySelectorAll('label[data-baseweb="checkbox"]');
+                checkboxes.forEach(lbl => {
+                    const inp = lbl.querySelector('input[type="checkbox"]');
+                    const box = lbl.querySelector('span:first-of-type') || lbl.firstElementChild;
+                    if (inp && box) {
+                        if (inp.checked) {
+                            box.style.setProperty('background-color', '#2ECC71', 'important');
+                            box.style.setProperty('border-color', '#2ECC71', 'important');
+                        } else {
+                            box.style.removeProperty('background-color');
+                            box.style.removeProperty('border-color');
+                        }
                     }
-                    div[role="radiogroup"] > label[data-baseweb="radio"]:nth-of-type(2):has(input:checked) > div:first-of-type {
-                        background-color: #2ECC71 !important;
-                        border-color: #2ECC71 !important;
+                });
+
+                // 2. Radios ("Comprar" vs "— Não") -> "Comprar" fica Verde (#2ECC71) quando selecionado
+                const radios = doc.querySelectorAll('label[data-baseweb="radio"]');
+                radios.forEach(lbl => {
+                    const inp = lbl.querySelector('input[type="radio"]');
+                    const circle = lbl.querySelector('div:first-of-type') || lbl.firstElementChild;
+                    const txt = (lbl.innerText || lbl.textContent || '').trim();
+                    if (inp && circle) {
+                        if (inp.checked && txt.includes('Comprar')) {
+                            circle.style.setProperty('background-color', '#2ECC71', 'important');
+                            circle.style.setProperty('border-color', '#2ECC71', 'important');
+                            const p = lbl.querySelector('p');
+                            if (p) {
+                                p.style.setProperty('color', '#2ECC71', 'important');
+                                p.style.setProperty('font-weight', '700', 'important');
+                            }
+                        } else {
+                            circle.style.removeProperty('background-color');
+                            circle.style.removeProperty('border-color');
+                            const p = lbl.querySelector('p');
+                            if (p) {
+                                p.style.removeProperty('color');
+                                p.style.removeProperty('font-weight');
+                            }
+                        }
                     }
-                    div[role="radiogroup"] > label[data-baseweb="radio"]:nth-of-type(2):has(input:checked) p {
-                        color: #2ECC71 !important;
-                        font-weight: 700 !important;
-                    }
-                `;
-                doc.head.appendChild(styleEl);
+                });
+            }
+
+            aplicarCoresVerdes();
+            setTimeout(aplicarCoresVerdes, 80);
+            setTimeout(aplicarCoresVerdes, 250);
+
+            if (!doc._observadorVerdeAtivo) {
+                doc._observadorVerdeAtivo = true;
+                const obs = new MutationObserver(() => {
+                    aplicarCoresVerdes();
+                });
+                obs.observe(doc.body, { childList: true, subtree: true, attributes: true });
+                doc.body.addEventListener('change', () => setTimeout(aplicarCoresVerdes, 20), true);
+                doc.body.addEventListener('click', () => setTimeout(aplicarCoresVerdes, 20), true);
             }
         } catch (e) {}
     })();
@@ -1046,7 +1116,7 @@ if menu == "Planejamento (Casa)":
     if "msg_sucesso_plan" in st.session_state:
         st.success(st.session_state.pop("msg_sucesso_plan"))
 
-    # Painel de Resumo Rápido no Topo
+    # Painel de Resumo Rápido no Topo (sem bolinha desnecessária)
     c_top1, c_top2 = st.columns(2)
     with c_top1:
         st.markdown(f"""
@@ -1060,7 +1130,7 @@ if menu == "Planejamento (Casa)":
         st.markdown(f"""
         <div class="card-azul">
             <b>🛒 Mercado (+ Extras)</b><br>
-            Itens marcados (🟢): <b>{totais_atuais['itens_plan_merc']}</b><br>
+            Itens marcados: <b>{totais_atuais['itens_plan_merc']}</b><br>
             Previsto Mercado: <b>{formatar_moeda_br(totais_atuais['merc_plan'])}</b>
         </div>
         """, unsafe_allow_html=True)
@@ -1224,11 +1294,25 @@ if menu == "Planejamento (Casa)":
             st.markdown(label_banco_html(LOGO_NUBANK, "Nubank", "CRÉDITO"), unsafe_allow_html=True)
             nu_cred = st.number_input("Nubank Crédito", min_value=0.0, value=safe_float(resumo_salvo.get("NubankCredito", 0.0)), step=10.0, format="%.2f", label_visibility="collapsed", key="pl_nc")
 
+        opcoes_pag_farm_pl = ["Dinheiro", "Bradesco - Débito", "Bradesco - Crédito", "Mercado Pago - Débito", "Mercado Pago - Crédito", "Nubank - Débito", "Nubank - Crédito"]
+        idx_pf_pl = opcoes_pag_farm_pl.index(resumo_salvo.get("PagamentoFarmacia")) if resumo_salvo.get("PagamentoFarmacia") in opcoes_pag_farm_pl else 0
         pag_farm_str = st.selectbox(
             "💊 Forma de Pagamento na Farmácia (Antes do Mercado):",
-            ["Dinheiro", "Bradesco - Débito", "Bradesco - Crédito", "Mercado Pago - Débito", "Mercado Pago - Crédito", "Nubank - Débito", "Nubank - Crédito"],
-            index=0
+            opcoes_pag_farm_pl,
+            index=idx_pf_pl
         )
+
+        st.markdown("#### 🚕 Transporte (Ida e Volta)")
+        opcoes_transp = ["Não houve", "Dinheiro", "Bradesco - Débito", "Bradesco - Crédito", "Mercado Pago - Débito", "Mercado Pago - Crédito", "Nubank - Débito", "Nubank - Crédito"]
+        ct1, ct2 = st.columns(2)
+        with ct1:
+            idx_ti = opcoes_transp.index(resumo_salvo.get("TranspIdaPag")) if resumo_salvo.get("TranspIdaPag") in opcoes_transp else 0
+            tr_ida_pag_pl = st.selectbox("🚕 Ida — Forma de Pagamento:", opcoes_transp, index=idx_ti, key="pl_ti_p")
+            tr_ida_val_pl = st.number_input("🚕 Ida — Valor (R$):", min_value=0.0, value=safe_float(resumo_salvo.get("TranspIdaVal", 0.0)), step=5.0, format="%.2f", key="pl_ti_v")
+        with ct2:
+            idx_tv = opcoes_transp.index(resumo_salvo.get("TranspVoltaPag")) if resumo_salvo.get("TranspVoltaPag") in opcoes_transp else 0
+            tr_volta_pag_pl = st.selectbox("🚕 Volta — Forma de Pagamento:", opcoes_transp, index=idx_tv, key="pl_tv_p")
+            tr_volta_val_pl = st.number_input("🚕 Volta — Valor (R$):", min_value=0.0, value=safe_float(resumo_salvo.get("TranspVoltaVal", 0.0)), step=5.0, format="%.2f", key="pl_tv_v")
 
         btn_salvar_plan = st.form_submit_button("💾 Salvar Planejamento do Mês", use_container_width=True)
 
@@ -1260,7 +1344,11 @@ if menu == "Planejamento (Casa)":
             "NubankDebito": nu_deb,
             "NubankCredito": nu_cred,
             "PagamentoFarmacia": pag_farm_str,
-            "ObsFechamento": resumo_salvo.get("ObsFechamento", "")
+            "ObsFechamento": resumo_salvo.get("ObsFechamento", ""),
+            "TranspIdaPag": tr_ida_pag_pl,
+            "TranspIdaVal": tr_ida_val_pl,
+            "TranspVoltaPag": tr_volta_pag_pl,
+            "TranspVoltaVal": tr_volta_val_pl
         }, ano_ativo)
         st.session_state["msg_sucesso_plan"] = f"✅ Planejamento de {mes_ano_ativo} salvo com sucesso! Previsto Mercado: {formatar_moeda_br(novos_tot['merc_plan'])} | Farmácia: {formatar_moeda_br(novos_tot['farm_plan'])}"
         st.rerun()
@@ -1399,9 +1487,8 @@ elif menu == "Conferência (Mercado)":
                     pr_c_atual = float(row["PrecoRealUnit_num"]) if row["PrecoRealUnit_num"] > 0 else float(row["PrecoUnit_num"])
                     obs_atual = str(row.get("ObsMes", "") or "")
 
-                    badge_plan = "🟢 Planejado" if row["Planejado_bool"] else "⚪ Extra"
                     st.markdown(
-                        f"**{prod}** <span class='item-sub'>({badge_plan}) — Marca: <b>{m1}{m2_txt}</b> | Planejado: <b>{formatar_qtd_br(row['QtdPlanejada_num'])} {unid}</b></span>",
+                        f"**{prod}** <span class='item-sub'>— Marca: <b>{m1}{m2_txt}</b> | Planejado: <b>{formatar_qtd_br(row['QtdPlanejada_num'])} {unid}</b></span>",
                         unsafe_allow_html=True
                     )
 
@@ -1502,6 +1589,19 @@ elif menu == "Conferência (Mercado)":
         opcoes_pag_farm = ["Dinheiro", "Bradesco - Débito", "Bradesco - Crédito", "Mercado Pago - Débito", "Mercado Pago - Crédito", "Nubank - Débito", "Nubank - Crédito"]
         idx_pf = opcoes_pag_farm.index(resumo_salvo.get("PagamentoFarmacia")) if resumo_salvo.get("PagamentoFarmacia") in opcoes_pag_farm else 0
         pag_farm_r = st.selectbox("💊 Pago na Farmácia com:", opcoes_pag_farm, index=idx_pf)
+
+        st.markdown("#### 🚕 Transporte (Ida e Volta)")
+        opcoes_transp_cf = ["Não houve", "Dinheiro", "Bradesco - Débito", "Bradesco - Crédito", "Mercado Pago - Débito", "Mercado Pago - Crédito", "Nubank - Débito", "Nubank - Crédito"]
+        ct_cf1, ct_cf2 = st.columns(2)
+        with ct_cf1:
+            idx_ti_cf = opcoes_transp_cf.index(resumo_salvo.get("TranspIdaPag")) if resumo_salvo.get("TranspIdaPag") in opcoes_transp_cf else 0
+            tr_ida_pag_cf = st.selectbox("🚕 Ida — Pago com:", opcoes_transp_cf, index=idx_ti_cf, key="cf_ti_p")
+            tr_ida_val_cf = st.number_input("🚕 Ida — Valor (R$):", min_value=0.0, value=safe_float(resumo_salvo.get("TranspIdaVal", 0.0)), step=5.0, format="%.2f", key="cf_ti_v")
+        with ct_cf2:
+            idx_tv_cf = opcoes_transp_cf.index(resumo_salvo.get("TranspVoltaPag")) if resumo_salvo.get("TranspVoltaPag") in opcoes_transp_cf else 0
+            tr_volta_pag_cf = st.selectbox("🚕 Volta — Pago com:", opcoes_transp_cf, index=idx_tv_cf, key="cf_tv_p")
+            tr_volta_val_cf = st.number_input("🚕 Volta — Valor (R$):", min_value=0.0, value=safe_float(resumo_salvo.get("TranspVoltaVal", 0.0)), step=5.0, format="%.2f", key="cf_tv_v")
+
         obs_fech_r = st.text_input("Observação geral da compra do mês:", value=str(resumo_salvo.get("ObsFechamento", "")))
 
         btn_salvar_conf = st.form_submit_button("✅ Salvar Conferência e Fechamento", use_container_width=True)
@@ -1533,7 +1633,11 @@ elif menu == "Conferência (Mercado)":
             "NubankDebito": n_deb_r,
             "NubankCredito": n_cred_r,
             "PagamentoFarmacia": pag_farm_r,
-            "ObsFechamento": obs_fech_r
+            "ObsFechamento": obs_fech_r,
+            "TranspIdaPag": tr_ida_pag_cf,
+            "TranspIdaVal": tr_ida_val_cf,
+            "TranspVoltaPag": tr_volta_pag_cf,
+            "TranspVoltaVal": tr_volta_val_cf
         }, ano_ativo)
         st.session_state["msg_sucesso_conf"] = f"✅ Conferência salva! Total Real Mercado: {formatar_moeda_br(novos_tot['merc_real'])} | Farmácia: {formatar_moeda_br(novos_tot['farm_real'])}"
         st.rerun()
@@ -1567,7 +1671,7 @@ elif menu == "Conferência (Mercado)":
 # ==============================================================================
 elif menu == "O que Faltou Comprar":
     st.markdown('<h2 style="margin-bottom: 0px;">⚠️ O que Faltou Comprar</h2>', unsafe_allow_html=True)
-    st.caption(f"Itens marcados no planejamento (🔵) de **{mes_ano_ativo}** que não foram comprados ou vieram em quantidade menor.")
+    st.caption(f"Itens marcados no planejamento de **{mes_ano_ativo}** que não foram comprados ou vieram em quantidade menor.")
 
     if "msg_faltou" in st.session_state:
         st.success(st.session_state.pop("msg_faltou"))
@@ -1638,124 +1742,262 @@ elif menu == "O que Faltou Comprar":
                     st.rerun()
 
 # ==============================================================================
-# GUIA 4: TABELA DE PREÇOS DO MÊS (ATUALIZAÇÃO RÁPIDA DE VALORES)
-# ==============================================================================
-elif menu == "Tabela de Preços do Mês":
-    st.markdown('<h2 style="margin-bottom: 0px;">💲 Tabela de Preços do Mês</h2>', unsafe_allow_html=True)
-    st.caption(f"Insira ou atualize rapidamente os preços unitários de **{mes_ano_ativo}** para calcular a previsão exata da compra.")
-
-    if "msg_precos" in st.session_state:
-        st.success(st.session_state.pop("msg_precos"))
-
-    # Botão para puxar preços da guia Catalogo (últimos preços praticados)
-    if st.button("📥 Puxar Últimos Preços Registrados no Catálogo Geral", use_container_width=True):
-        df_cat_ref = carregar_df_catalogo(ano_ativo)
-        mapa_cat = {str(r["Codigo"]).strip(): safe_float(r["PrecoRef_num"]) for _, r in df_cat_ref.iterrows()}
-        for idx_r, r in df_mes.iterrows():
-            cod_r = str(r["Codigo"]).strip()
-            if cod_r in mapa_cat and mapa_cat[cod_r] > 0:
-                df_mes.at[idx_r, "PrecoUnit_num"] = mapa_cat[cod_r]
-                if df_mes.at[idx_r, "PrecoRealUnit_num"] <= 0:
-                    df_mes.at[idx_r, "PrecoRealUnit_num"] = mapa_cat[cod_r]
-        salvar_df_mes(sheet_mes, df_mes, ano_ativo, atualizar_preco_catalogo=False)
-        st.session_state["msg_precos"] = "✅ Preços sincronizados com a base de referência!"
-        st.rerun()
-
-    setor_pr_sel = st.selectbox("Filtrar Setor para digitar preços:", ["📋 Todos os Setores"] + SETORES_OFICIAIS, index=0)
-    df_pr_view = df_mes if setor_pr_sel.startswith("📋") else df_mes[df_mes["Setor"] == setor_pr_sel]
-
-    st.caption("💡 Você pode digitar o preço inteiro (ex: `5`), com vírgula (ex: `35,00`) ou com ponto (ex: `35.00`).")
-
-    df_editor_pr = pd.DataFrame({
-        "idx_orig": df_pr_view.index,
-        "Setor": df_pr_view["Setor"],
-        "Produto": df_pr_view["Produto"],
-        "Marca 1": df_pr_view["Marca1"].apply(exibir_marca_limpa),
-        "Unidade": df_pr_view["Unidade"],
-        "Qtd Padrão": df_pr_view["QtdPlanejada_num"].apply(formatar_qtd_br),
-        "Preço Unit. (R$)": df_pr_view["PrecoUnit_num"].apply(lambda v: f"{safe_float(v):.2f}".replace(".", ","))
-    })
-
-    editado_pr = st.data_editor(
-        df_editor_pr,
-        hide_index=True,
-        use_container_width=True,
-        disabled=["idx_orig", "Setor", "Produto", "Marca 1", "Unidade", "Qtd Padrão"],
-        column_config={
-            "idx_orig": None,
-            "Preço Unit. (R$)": st.column_config.TextColumn("Preço Unit. (R$)", help="Digite ex: 5 ou 35,00 ou 35.50")
-        }
-    )
-
-    if st.button("💾 Salvar Tabela de Preços do Mês", type="primary", use_container_width=True):
-        for _, r_ed in editado_pr.iterrows():
-            idx_o = int(r_ed["idx_orig"])
-            novo_p = safe_float(r_ed["Preço Unit. (R$)"])
-            df_mes.at[idx_o, "PrecoUnit_num"] = novo_p
-            if not df_mes.at[idx_o, "Comprado_bool"] or df_mes.at[idx_o, "PrecoRealUnit_num"] <= 0:
-                df_mes.at[idx_o, "PrecoRealUnit_num"] = novo_p
-        salvar_df_mes(sheet_mes, df_mes, ano_ativo, atualizar_preco_catalogo=True)
-        st.session_state["msg_precos"] = f"✅ Preços de {mes_ano_ativo} atualizados com sucesso!"
-        st.rerun()
-
-# ==============================================================================
-# GUIA 5: RELATÓRIO / COFRE HISTÓRICO (COMPARATIVO ENTRE MESES E CARTÕES)
+# GUIA 5: RELATÓRIO / COFRE HISTÓRICO (LAYOUT FIEL AO ESBOÇO DO USUÁRIO)
 # ==============================================================================
 elif menu == "Relatório / Histórico":
-    st.markdown('<h2 style="margin-bottom: 0px;">📊 Relatório / Cofre Histórico</h2>', unsafe_allow_html=True)
-    st.caption("Comparativo mensal de gastos (Mercado vs. Farmácia) e divisão por forma de pagamento (Dinheiro e Cartões Débito/Crédito).")
+    # Cabeçalho alinhado com o seletor de Mês/Ano ao lado direito do título (idêntico à imagem enviada)
+    col_t_rel, col_s_rel, _ = st.columns([1.35, 1.0, 0.8])
+    with col_t_rel:
+        st.markdown('<h2 style="margin-top: 2px; margin-bottom: 0px;">📅 Resumo Mensal</h2>', unsafe_allow_html=True)
+    with col_s_rel:
+        mes_rel_sel = st.selectbox(
+            "Mês do Resumo",
+            opcoes_meses,
+            index=opcoes_meses.index(mes_ano_ativo) if mes_ano_ativo in opcoes_meses else 0,
+            label_visibility="collapsed",
+            key="sel_mes_relatorio"
+        )
 
-    ano_hist_sel = st.selectbox("Consultar Planilha Anual:", [str(a) for a in range(2026, 2031)], index=0)
-    try:
-        sh_res_h = obter_aba_resumo_mensal(ano_hist_sel)
-        vals_rh = executar_com_retry(sh_res_h.get_values)
-    except Exception:
-        vals_rh = []
+    ano_rel_sel = mes_rel_sel.split(" ")[-1]
+    res_mes_rel = obter_resumo_mes(mes_rel_sel, ano_rel_sel)
 
-    if len(vals_rh) <= 1:
-        st.info(f"Ainda não há resumos mensais salvos em Compras {ano_hist_sel}. Salve o Planejamento ou a Conferência para alimentar o histórico!")
+    # Se o mês selecionado for o ativo, combina com os totais em tempo real caso ainda não tenha clicado em salvar
+    if mes_rel_sel == mes_ano_ativo:
+        df_rel_mes = df_mes
     else:
-        df_rh = pd.DataFrame(vals_rh[1:], columns=vals_rh[0])
-        st.markdown(f"### 📅 Resumo Mensal — Compras {ano_hist_sel}")
+        df_rel_mes, _ = carregar_df_mes(mes_rel_sel, ano_rel_sel)
+    tot_rel = calcular_totais_df(df_rel_mes)
 
-        linhas_md = [
-            "| Mês/Ano | Data | 🛒 Mercado (Prev.) | 🛒 Mercado (Real) | 💊 Farmácia (Real) | 💵 Dinheiro | 💳 Total Cartões |",
-            "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
-        ]
-        for _, r in df_rh.iterrows():
-            m_ano = str(r.get("MesAno", ""))
-            dt_c = str(r.get("DataCompra", "-"))
-            mp = safe_float(r.get("TotalMercadoPlanejado", 0.0))
-            mr = safe_float(r.get("TotalMercadoReal", 0.0))
-            fr = safe_float(r.get("TotalFarmaciaReal", 0.0))
-            din = safe_float(r.get("Dinheiro", 0.0))
-            cartoes = (
-                safe_float(r.get("BradescoDebito", 0.0)) +
-                safe_float(r.get("BradescoCredito", 0.0)) +
-                safe_float(r.get("MercadoPagoDebito", 0.0)) +
-                safe_float(r.get("MercadoPagoCredito", 0.0)) +
-                safe_float(r.get("NubankDebito", 0.0)) +
-                safe_float(r.get("NubankCredito", 0.0))
-            )
-            linhas_md.append(
-                f"| **{m_ano}** | {dt_c} | {formatar_moeda_br(mp)} | **{formatar_moeda_br(mr)}** | {formatar_moeda_br(fr)} | {formatar_moeda_br(din)} | {formatar_moeda_br(cartoes)} |"
-            )
-        st.markdown("\n".join(linhas_md))
+    dt_exib = res_mes_rel.get("DataCompra") or data_padrao_dia_5(mes_rel_sel).strftime("%d/%m/%Y")
+    merc_prev_exib = safe_float(res_mes_rel.get("TotalMercadoPlanejado", tot_rel["merc_plan"])) or tot_rel["merc_plan"]
+    merc_real_exib = safe_float(res_mes_rel.get("TotalMercadoReal", tot_rel["merc_real"])) or tot_rel["merc_real"]
+    farm_real_exib = safe_float(res_mes_rel.get("TotalFarmaciaReal", tot_rel["farm_real"]))
+    if farm_real_exib <= 0 and tot_rel["farm_plan"] > 0:
+        farm_real_exib = tot_rel["farm_plan"]
 
-        st.markdown("### 💳 Detalhamento por Cartão (Débito vs. Crédito)")
-        meses_disp = df_rh["MesAno"].astype(str).tolist()
-        mes_det_sel = st.selectbox("Ver abertura de pagamentos do mês:", meses_disp, index=len(meses_disp)-1)
-        row_det = df_rh[df_rh["MesAno"] == mes_det_sel].iloc[-1]
+    din_merc_exib = safe_float(res_mes_rel.get("Dinheiro", 0.0))
+    brad_deb_exib = safe_float(res_mes_rel.get("BradescoDebito", 0.0))
+    brad_cred_exib = safe_float(res_mes_rel.get("BradescoCredito", 0.0))
+    mp_deb_exib = safe_float(res_mes_rel.get("MercadoPagoDebito", 0.0))
+    mp_cred_exib = safe_float(res_mes_rel.get("MercadoPagoCredito", 0.0))
+    nu_deb_exib = safe_float(res_mes_rel.get("NubankDebito", 0.0))
+    nu_cred_exib = safe_float(res_mes_rel.get("NubankCredito", 0.0))
 
-        st.markdown(f"""
-        | Forma de Pagamento (Mercado) | Débito | Crédito | Subtotal |
-        | :--- | :--- | :--- | :--- |
-        | **💵 Dinheiro (1º no Caixa)** | - | - | **{formatar_moeda_br(row_det.get('Dinheiro', 0.0))}** |
-        | <img src="{LOGO_BRADESCO}" width="20" style="vertical-align:middle;border-radius:4px;"> **Bradesco** | {formatar_moeda_br(row_det.get('BradescoDebito', 0.0))} | {formatar_moeda_br(row_det.get('BradescoCredito', 0.0))} | **{formatar_moeda_br(safe_float(row_det.get('BradescoDebito', 0.0)) + safe_float(row_det.get('BradescoCredito', 0.0)))}** |
-        | <img src="{LOGO_MERCADOPAGO}" width="20" style="vertical-align:middle;border-radius:4px;"> **Mercado Pago** | {formatar_moeda_br(row_det.get('MercadoPagoDebito', 0.0))} | {formatar_moeda_br(row_det.get('MercadoPagoCredito', 0.0))} | **{formatar_moeda_br(safe_float(row_det.get('MercadoPagoDebito', 0.0)) + safe_float(row_det.get('MercadoPagoCredito', 0.0)))}** |
-        | <img src="{LOGO_NUBANK}" width="20" style="vertical-align:middle;border-radius:4px;"> **Nubank** | {formatar_moeda_br(row_det.get('NubankDebito', 0.0))} | {formatar_moeda_br(row_det.get('NubankCredito', 0.0))} | **{formatar_moeda_br(safe_float(row_det.get('NubankDebito', 0.0)) + safe_float(row_det.get('NubankCredito', 0.0)))}** |
-        """, unsafe_allow_html=True)
-        st.caption(f"💊 **Farmácia ({mes_det_sel}):** {formatar_moeda_br(row_det.get('TotalFarmaciaReal', 0.0))} (Pago via: {row_det.get('PagamentoFarmacia', '-')}) | 📝 **Obs:** {row_det.get('ObsFechamento', '-')}")
+    tot_cartoes_merc = arredondar_moeda(
+        brad_deb_exib + brad_cred_exib + mp_deb_exib + mp_cred_exib + nu_deb_exib + nu_cred_exib, 2
+    )
+
+    # Dados de Transporte (Ida e Volta)
+    tr_ida_pag = str(res_mes_rel.get("TranspIdaPag", "Não houve"))
+    tr_ida_val = safe_float(res_mes_rel.get("TranspIdaVal", 0.0))
+    tr_volta_pag = str(res_mes_rel.get("TranspVoltaPag", "Não houve"))
+    tr_volta_val = safe_float(res_mes_rel.get("TranspVoltaVal", 0.0))
+
+    # Soma Geral do Mês (Farmácia + Mercado [Pagamentos ou Real] + Transporte)
+    base_merc_geral = (din_merc_exib + tot_cartoes_merc) if (din_merc_exib + tot_cartoes_merc) > 0 else merc_real_exib
+    total_geral_exib = arredondar_moeda(farm_real_exib + base_merc_geral + tr_ida_val + tr_volta_val, 2)
+
+    # Forma de pagamento da Farmácia
+    pag_farm_metodo = str(res_mes_rel.get("PagamentoFarmacia", "Dinheiro") or "Dinheiro")
+    if "Bradesco" in pag_farm_metodo:
+        icone_farm_pag = f'<img src="{LOGO_BRADESCO}" width="20" style="vertical-align:middle;border-radius:4px;margin-right:6px;"> <b>Bradesco</b>'
+    elif "Mercado Pago" in pag_farm_metodo:
+        icone_farm_pag = f'<img src="{LOGO_MERCADOPAGO}" width="20" style="vertical-align:middle;border-radius:4px;margin-right:6px;"> <b>Mercado Pago</b>'
+    elif "Nubank" in pag_farm_metodo:
+        icone_farm_pag = f'<img src="{LOGO_NUBANK}" width="20" style="vertical-align:middle;border-radius:4px;margin-right:6px;"> <b>Nubank</b>'
+    else:
+        icone_farm_pag = '💵 <b>Dinheiro</b>'
+
+    farm_deb_str = formatar_moeda_br(farm_real_exib) if "Débito" in pag_farm_metodo else ("-" if "Dinheiro" in pag_farm_metodo else "R$ 0,00")
+    farm_cred_str = formatar_moeda_br(farm_real_exib) if "Crédito" in pag_farm_metodo else ("-" if "Dinheiro" in pag_farm_metodo else "R$ 0,00")
+
+    # Cálculo das linhas da seção Forma de Pagamento (Transporte) com indicadores visuais Ida / Volta
+    def montar_dados_transporte(chave_banco):
+        usou_ida = tr_ida_pag.startswith(chave_banco) and tr_ida_val > 0
+        usou_volta = tr_volta_pag.startswith(chave_banco) and tr_volta_val > 0
+
+        bolinha_ida = '<span style="display:inline-block;width:13px;height:13px;border-radius:50%;background:#2ECC71;border:2px solid #E0E0E0;vertical-align:middle;margin-right:3px;"></span>' if usou_ida else '<span style="display:inline-block;width:13px;height:13px;border-radius:50%;background:transparent;border:2px solid #90A4AE;vertical-align:middle;margin-right:3px;"></span>'
+        bolinha_volta = '<span style="display:inline-block;width:13px;height:13px;border-radius:50%;background:#2ECC71;border:2px solid #E0E0E0;vertical-align:middle;margin-right:3px;"></span>' if usou_volta else '<span style="display:inline-block;width:13px;height:13px;border-radius:50%;background:transparent;border:2px solid #90A4AE;vertical-align:middle;margin-right:3px;"></span>'
+        html_ida_volta = f'<span style="margin-left:10px;font-size:0.82rem;color:#CFD8DC;">{bolinha_ida}Ida &nbsp; {bolinha_volta}Volta</span>'
+
+        if chave_banco == "Dinheiro":
+            sub_t = (tr_ida_val if usou_ida else 0.0) + (tr_volta_val if usou_volta else 0.0)
+            return html_ida_volta, "-", "-", formatar_moeda_br(sub_t)
+
+        val_deb = 0.0
+        val_cred = 0.0
+        if usou_ida:
+            if "Débito" in tr_ida_pag:
+                val_deb += tr_ida_val
+            else:
+                val_cred += tr_ida_val
+        if usou_volta:
+            if "Débito" in tr_volta_pag:
+                val_deb += tr_volta_val
+            else:
+                val_cred += tr_volta_val
+        sub_t = val_deb + val_cred
+        return html_ida_volta, formatar_moeda_br(val_deb), formatar_moeda_br(val_cred), formatar_moeda_br(sub_t)
+
+    iv_din, td_din, tc_din, ts_din = montar_dados_transporte("Dinheiro")
+    iv_bra, td_bra, tc_bra, ts_bra = montar_dados_transporte("Bradesco")
+    iv_mp, td_mp, tc_mp, ts_mp = montar_dados_transporte("Mercado Pago")
+    iv_nu, td_nu, tc_nu, ts_nu = montar_dados_transporte("Nubank")
+
+    # Renderização das 2 Tabelas idênticas ao simulado do usuário
+    st.markdown(f"""
+    <style>
+        .tbl-resumo {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            margin-bottom: 18px;
+            font-size: 0.90rem;
+            background-color: rgba(25, 32, 42, 0.55);
+            border-radius: 8px;
+            overflow: hidden;
+        }}
+        .tbl-resumo th {{
+            text-align: center;
+            padding: 8px 6px;
+            border-bottom: 1px solid rgba(255,255,255,0.12);
+            color: #E0E6ED;
+            font-weight: 700;
+            line-height: 1.25;
+        }}
+        .tbl-resumo td {{
+            text-align: center;
+            padding: 10px 6px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            color: #FFFFFF;
+        }}
+        .tbl-det {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 8px;
+            font-size: 0.92rem;
+            background-color: rgba(25, 32, 42, 0.55);
+            border-radius: 8px;
+            overflow: hidden;
+        }}
+        .tbl-det th {{
+            text-align: left;
+            padding: 10px 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.14);
+            color: #E0E6ED;
+            font-weight: 700;
+            background-color: rgba(255,255,255,0.03);
+        }}
+        .tbl-det td {{
+            padding: 9px 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            color: #E0E6ED;
+        }}
+    </style>
+
+    <table class="tbl-resumo">
+        <thead>
+            <tr>
+                <th><br>Data</th>
+                <th>🛒<br>Mercado<br><span style="font-weight:400;font-size:0.80rem;">(Prev.)</span></th>
+                <th>🛒<br>Mercado<br><span style="font-weight:400;font-size:0.80rem;">(Real)</span></th>
+                <th>💊<br>Farmácia<br><span style="font-weight:400;font-size:0.80rem;">(Real)</span></th>
+                <th>💵 🛒<br>Dinheiro</th>
+                <th>💳 🛒<br>Total<br>Cartões</th>
+                <th>💵 💳<br>Total<br><span style="font-weight:400;font-size:0.80rem;">Geral</span></th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>{dt_exib}</td>
+                <td>{formatar_moeda_br(merc_prev_exib)}</td>
+                <td><b>{formatar_moeda_br(merc_real_exib)}</b></td>
+                <td><b>{formatar_moeda_br(farm_real_exib)}</b></td>
+                <td>{formatar_moeda_br(din_merc_exib)}</td>
+                <td>{formatar_moeda_br(tot_cartoes_merc)}</td>
+                <td><b>{formatar_moeda_br(total_geral_exib)}</b></td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3 style="margin-top: 8px; margin-bottom: 6px;">🗒️ Detalhamento</h3>
+
+    <table class="tbl-det">
+        <thead>
+            <tr>
+                <th>Forma de Pagamento <span style="font-weight:400;">(Farmácia)</span></th>
+                <th>Débito</th>
+                <th>Crédito</th>
+                <th>Subtotal</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>{icone_farm_pag}</td>
+                <td>{farm_deb_str}</td>
+                <td>{farm_cred_str}</td>
+                <td><b>{formatar_moeda_br(farm_real_exib)}</b></td>
+            </tr>
+            <tr>
+                <th colspan="4">Forma de Pagamento (Mercado)</th>
+            </tr>
+            <tr>
+                <td>💵 <b>Dinheiro</b></td>
+                <td>-</td>
+                <td>-</td>
+                <td><b>{formatar_moeda_br(din_merc_exib)}</b></td>
+            </tr>
+            <tr>
+                <td><img src="{LOGO_BRADESCO}" width="20" style="vertical-align:middle;border-radius:4px;margin-right:6px;"> <b>Bradesco</b></td>
+                <td>{formatar_moeda_br(brad_deb_exib)}</td>
+                <td>{formatar_moeda_br(brad_cred_exib)}</td>
+                <td><b>{formatar_moeda_br(brad_deb_exib + brad_cred_exib)}</b></td>
+            </tr>
+            <tr>
+                <td><img src="{LOGO_MERCADOPAGO}" width="20" style="vertical-align:middle;border-radius:4px;margin-right:6px;"> <b>Mercado Pago</b></td>
+                <td>{formatar_moeda_br(mp_deb_exib)}</td>
+                <td>{formatar_moeda_br(mp_cred_exib)}</td>
+                <td><b>{formatar_moeda_br(mp_deb_exib + mp_cred_exib)}</b></td>
+            </tr>
+            <tr>
+                <td><img src="{LOGO_NUBANK}" width="20" style="vertical-align:middle;border-radius:4px;margin-right:6px;"> <b>Nubank</b></td>
+                <td>{formatar_moeda_br(nu_deb_exib)}</td>
+                <td>{formatar_moeda_br(nu_cred_exib)}</td>
+                <td><b>{formatar_moeda_br(nu_deb_exib + nu_cred_exib)}</b></td>
+            </tr>
+            <tr>
+                <th colspan="4">Forma de Pagamento <span style="font-weight:400;">(Transporte)</span></th>
+            </tr>
+            <tr>
+                <td>💵 <b>Dinheiro</b> {iv_din}</td>
+                <td>{td_din}</td>
+                <td>{tc_din}</td>
+                <td><b>{ts_din}</b></td>
+            </tr>
+            <tr>
+                <td><img src="{LOGO_BRADESCO}" width="20" style="vertical-align:middle;border-radius:4px;margin-right:6px;"> <b>Bradesco</b> {iv_bra}</td>
+                <td>{td_bra}</td>
+                <td>{tc_bra}</td>
+                <td><b>{ts_bra}</b></td>
+            </tr>
+            <tr>
+                <td><img src="{LOGO_MERCADOPAGO}" width="20" style="vertical-align:middle;border-radius:4px;margin-right:6px;"> <b>Mercado Pago</b> {iv_mp}</td>
+                <td>{td_mp}</td>
+                <td>{tc_mp}</td>
+                <td><b>{ts_mp}</b></td>
+            </tr>
+            <tr>
+                <td><img src="{LOGO_NUBANK}" width="20" style="vertical-align:middle;border-radius:4px;margin-right:6px;"> <b>Nubank</b> {iv_nu}</td>
+                <td>{td_nu}</td>
+                <td>{tc_nu}</td>
+                <td><b>{ts_nu}</b></td>
+            </tr>
+        </tbody>
+    </table>
+    """, unsafe_allow_html=True)
+
+    if res_mes_rel.get("ObsFechamento"):
+        st.caption(f"📝 **Observações do fechamento ({mes_rel_sel}):** {res_mes_rel.get('ObsFechamento')}")
 
 # ==============================================================================
 # GUIA 6: CADASTRO DE PRODUTOS E DEPARTAMENTOS (CATÁLOGO FIXO)
@@ -1893,4 +2135,4 @@ elif menu == "Cadastro de Produtos":
         limpar_cache_dados()
         st.session_state["msg_cat"] = "✅ Catálogo de produtos atualizado com sucesso!"
         st.rerun()
-# === FIM DO CÓDIGO - VERSÃO v.1.15.1 ===
+# === FIM DO CÓDIGO - VERSÃO v.1.16 ===
