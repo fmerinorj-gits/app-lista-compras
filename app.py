@@ -1,4 +1,4 @@
-# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.16 ===
+# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.17 ===
 import base64
 import math
 import time
@@ -10,7 +10,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import gspread
 from google.oauth2.service_account import Credentials
 
-VERSAO_APP = "v.1.16"
+VERSAO_APP = "v.1.17"
 
 # Configuração de página idêntica ao padrão mobile/centered do App Luz & Água
 st.set_page_config(
@@ -87,20 +87,13 @@ st.markdown("""
         margin-bottom: 4px;
         margin-top: 6px;
     }
-    /* Força cor VERDE (#2ECC71) nos Checkboxes marcados (Conferência / Faltantes) */
-    label[data-baseweb="checkbox"]:has(input:checked) > span:first-of-type,
-    div[data-testid="stCheckbox"] label:has(input:checked) > span:first-of-type {
-        background-color: #2ECC71 !important;
-        border-color: #2ECC71 !important;
+    /* Transforma o Vermelho nativo (#FF4B4B) do Streamlit em VERDE (#2ECC71) nos Checkboxes ("Comprado") */
+    div[data-testid="stCheckbox"] {
+        filter: hue-rotate(125deg) saturate(1.5) brightness(1.1) !important;
     }
-    /* Força cor VERDE (#2ECC71) quando a 2ª opção ("Comprar") do Radio está marcada no Planejamento */
-    div[role="radiogroup"] > label[data-baseweb="radio"]:nth-of-type(2):has(input:checked) > div:first-of-type {
-        background-color: #2ECC71 !important;
-        border-color: #2ECC71 !important;
-    }
-    div[role="radiogroup"] > label[data-baseweb="radio"]:nth-of-type(2):has(input:checked) p {
-        color: #2ECC71 !important;
-        font-weight: 700 !important;
+    /* Transforma o Vermelho nativo (#FF4B4B) do Streamlit em VERDE (#2ECC71) apenas na 2ª opção ("Comprar") do Radio, mantendo "— Não" em Vermelho! */
+    div[role="radiogroup"] > *:nth-child(2) {
+        filter: hue-rotate(125deg) saturate(1.5) brightness(1.1) !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -982,75 +975,37 @@ if st.session_state.get("fechar_menu_agora", False):
         height=0
     )
 
-# Observador JavaScript ativo no documento principal: força cor VERDE (#2ECC71) diretamente nos elementos marcados
-# ("Comprar" no Planejamento e "Comprado" na Conferência), superando qualquer estilo nativo do Streamlit
+# Garante via JS no documento pai que o filtro Verde esteja aplicado exatamente no 2º botão ("Comprar") e nos Checkboxes ("Comprado")
 components.html(
-    """
+    f"""
+    <!-- Filtro Verde v{VERSAO_APP} - #{st.session_state["recolher_menu"]} -->
     <script>
-    (function() {
-        try {
+    (function() {{
+        try {{
             const doc = window.parent.document;
+            const filtroVerde = 'hue-rotate(125deg) saturate(1.5) brightness(1.1)';
 
-            function aplicarCoresVerdes() {
-                // 1. Checkboxes ("Comprado", etc.) -> Ficam Verdes (#2ECC71) quando marcados
-                const checkboxes = doc.querySelectorAll('label[data-baseweb="checkbox"]');
-                checkboxes.forEach(lbl => {
-                    const inp = lbl.querySelector('input[type="checkbox"]');
-                    const box = lbl.querySelector('span:first-of-type') || lbl.firstElementChild;
-                    if (inp && box) {
-                        if (inp.checked) {
-                            box.style.setProperty('background-color', '#2ECC71', 'important');
-                            box.style.setProperty('border-color', '#2ECC71', 'important');
-                        } else {
-                            box.style.removeProperty('background-color');
-                            box.style.removeProperty('border-color');
-                        }
-                    }
-                });
+            function aplicarFiltroVerde() {{
+                doc.querySelectorAll('div[data-testid="stCheckbox"]').forEach(el => {{
+                    el.style.setProperty('filter', filtroVerde, 'important');
+                }});
+                doc.querySelectorAll('div[role="radiogroup"]').forEach(rg => {{
+                    if (rg.children && rg.children.length >= 2) {{
+                        rg.children[0].style.removeProperty('filter');
+                        rg.children[1].style.setProperty('filter', filtroVerde, 'important');
+                    }}
+                }});
+            }}
 
-                // 2. Radios ("Comprar" vs "— Não") -> "Comprar" fica Verde (#2ECC71) quando selecionado
-                const radios = doc.querySelectorAll('label[data-baseweb="radio"]');
-                radios.forEach(lbl => {
-                    const inp = lbl.querySelector('input[type="radio"]');
-                    const circle = lbl.querySelector('div:first-of-type') || lbl.firstElementChild;
-                    const txt = (lbl.innerText || lbl.textContent || '').trim();
-                    if (inp && circle) {
-                        if (inp.checked && txt.includes('Comprar')) {
-                            circle.style.setProperty('background-color', '#2ECC71', 'important');
-                            circle.style.setProperty('border-color', '#2ECC71', 'important');
-                            const p = lbl.querySelector('p');
-                            if (p) {
-                                p.style.setProperty('color', '#2ECC71', 'important');
-                                p.style.setProperty('font-weight', '700', 'important');
-                            }
-                        } else {
-                            circle.style.removeProperty('background-color');
-                            circle.style.removeProperty('border-color');
-                            const p = lbl.querySelector('p');
-                            if (p) {
-                                p.style.removeProperty('color');
-                                p.style.removeProperty('font-weight');
-                            }
-                        }
-                    }
-                });
-            }
+            aplicarFiltroVerde();
+            setTimeout(aplicarFiltroVerde, 100);
+            setTimeout(aplicarFiltroVerde, 300);
 
-            aplicarCoresVerdes();
-            setTimeout(aplicarCoresVerdes, 80);
-            setTimeout(aplicarCoresVerdes, 250);
-
-            if (!doc._observadorVerdeAtivo) {
-                doc._observadorVerdeAtivo = true;
-                const obs = new MutationObserver(() => {
-                    aplicarCoresVerdes();
-                });
-                obs.observe(doc.body, { childList: true, subtree: true, attributes: true });
-                doc.body.addEventListener('change', () => setTimeout(aplicarCoresVerdes, 20), true);
-                doc.body.addEventListener('click', () => setTimeout(aplicarCoresVerdes, 20), true);
-            }
-        } catch (e) {}
-    })();
+            if (!doc._intervaloVerdeV117) {{
+                doc._intervaloVerdeV117 = setInterval(aplicarFiltroVerde, 400);
+            }}
+        }} catch (e) {{}}
+    }})();
     </script>
     """,
     height=0
@@ -1718,7 +1673,7 @@ elif menu == "O que Faltou Comprar":
                     m1 = exibir_marca_limpa(rf["Marca1"])
                     pr_base = rf["PrecoRealUnit_num"] if rf["PrecoRealUnit_num"] > 0 else rf["PrecoUnit_num"]
                     chk_f = st.checkbox(
-                        f"✅ Dar baixa: **{rf['Produto']}** ({m1}) — Faltam **{formatar_qtd_br(qtd_falta)} {rf['Unidade']}** | Estimado: **{formatar_moeda_br(custo_falta)}** (Unit: {formatar_moeda_br(pr_base)})",
+                        f"Dar baixa: **{rf['Produto']}** ({m1}) — Faltam **{formatar_qtd_br(qtd_falta)} {rf['Unidade']}** | Estimado: **{formatar_moeda_br(custo_falta)}** (Unit: {formatar_moeda_br(pr_base)})",
                         value=False,
                         key=f"flt_{mes_ano_ativo}_{idx_f}"
                     )
@@ -2135,4 +2090,4 @@ elif menu == "Cadastro de Produtos":
         limpar_cache_dados()
         st.session_state["msg_cat"] = "✅ Catálogo de produtos atualizado com sucesso!"
         st.rerun()
-# === FIM DO CÓDIGO - VERSÃO v.1.16 ===
+# === FIM DO CÓDIGO - VERSÃO v.1.17 ===
