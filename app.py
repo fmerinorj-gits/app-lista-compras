@@ -1,4 +1,4 @@
-# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.17 ===
+# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.18 ===
 import base64
 import math
 import time
@@ -10,7 +10,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import gspread
 from google.oauth2.service_account import Credentials
 
-VERSAO_APP = "v.1.17"
+VERSAO_APP = "v.1.18"
 
 # Configuração de página idêntica ao padrão mobile/centered do App Luz & Água
 st.set_page_config(
@@ -204,6 +204,10 @@ def exibir_marca_limpa(marca_str):
     if m in ["", "-", "--", "nan", "None"]:
         return "Sem marca específica"
     return m
+
+def eh_unidade_fracionada(unid_str):
+    """Retorna True apenas para itens vendidos a granel/peso (Kg). Unidades fechadas (Pacote, Saco, Lata, etc.) usam inteiros sem '.00'."""
+    return str(unid_str or "").strip().lower() == "kg"
 
 def data_padrao_dia_5(mes_ano_str):
     """Retorna o dia 05 do Mês/Ano ativo como data padrão de compra (5º dia útil / pagamento)."""
@@ -609,22 +613,38 @@ def ler_dados_aba_mes_cached(mes_ano_str, ano_str=None):
         if c not in df.columns:
             df[c] = ""
 
-    # Sincroniza nomes/unidades/ordem do Catálogo e ajusta Arroz (5Kg -> 1 Pacote de 5Kg)
+    # Sincroniza nomes/unidades/ordem/quantidades padrão do Catálogo
     df_cat = carregar_df_catalogo(ano_str)
     if "#22" in df["Codigo"].astype(str).str.strip().values:
         df = df[df["Codigo"].astype(str).str.strip() != "#22"].copy()
 
     mapa_cat_meta = {str(rc["Codigo"]).strip(): rc for _, rc in df_cat.iterrows()}
+    mapa_qtd_fabrica = {str(it[1]).strip(): float(it[6]) for it in CATALOGO_INICIAL}
     precisa_salvar_migracao = False
     for idx_m, rm in df.iterrows():
         c_m = str(rm["Codigo"]).strip()
         if c_m in mapa_cat_meta:
             rc_ref = mapa_cat_meta[c_m]
+            qtd_cat_atual = safe_float(rc_ref["QtdPadrao_num"])
+            qtd_plan_mes = safe_float(rm["QtdPlanejada"])
+            qtd_fab = mapa_qtd_fabrica.get(c_m, qtd_cat_atual)
+            plan_b_atual = safe_bool(rm["Planejado"])
+            comp_b_atual = safe_bool(rm["Comprado"])
+
             # Se o Arroz (#1) estava com unidade antiga "Kg" e Qtd 5, migra para 1 Pacote (5Kg)
-            if c_m == "#1" and str(rm["Unidade"]) == "Kg" and safe_float(rm["QtdPlanejada"]) == 5.0:
+            if c_m == "#1" and str(rm["Unidade"]) == "Kg" and qtd_plan_mes == 5.0:
                 df.at[idx_m, "QtdPlanejada"] = "1"
                 df.at[idx_m, "QtdComprada"] = "1"
                 precisa_salvar_migracao = True
+
+            # Sincroniza QtdPlanejada se o item ainda não foi marcado OU se foi alterado no Cadastro de Produtos em relação ao padrão inicial
+            if qtd_cat_atual > 0 and abs(qtd_plan_mes - qtd_cat_atual) > 1e-4:
+                if (not plan_b_atual and not comp_b_atual) or (abs(qtd_cat_atual - qtd_fab) > 1e-4 and abs(qtd_plan_mes - qtd_fab) < 1e-4):
+                    df.at[idx_m, "QtdPlanejada"] = formatar_num_planilha(qtd_cat_atual, 3)
+                    if not comp_b_atual:
+                        df.at[idx_m, "QtdComprada"] = formatar_num_planilha(qtd_cat_atual, 3)
+                    precisa_salvar_migracao = True
+
             if (str(rm["Produto"]) != str(rc_ref["Produto"]) or
                 str(rm["Unidade"]) != str(rc_ref["Unidade"]) or
                 str(rm["Marca1"]) != str(rc_ref["Marca1"]) or
@@ -1176,7 +1196,7 @@ if menu == "Planejamento (Casa)":
                     prod = str(row["Produto"])
                     m1 = exibir_marca_limpa(row["Marca1"])
                     m2 = str(row["Marca2"] or "").strip()
-                    m2_txt = f" | 2ª Opção/Obs: <b>{m2}</b>" if m2 not in ["", "-", "--", "nan"] else ""
+                    m2_txt = f" | <b>{m2}</b>" if m2 not in ["", "-", "--", "nan"] else ""
                     unid = str(row["Unidade"])
                     plan_atual = bool(row["Planejado_bool"])
                     qtd_atual = float(row["QtdPlanejada_num"]) if row["QtdPlanejada_num"] > 0 else 1.0
@@ -1197,14 +1217,23 @@ if menu == "Planejamento (Casa)":
                             key=f"pl_rad_{mes_ano_ativo}_{idx_row}"
                         )
                     with c2:
-                        nova_qtd = st.number_input(
-                            f"{unid}",
-                            min_value=0.0,
-                            value=qtd_atual,
-                            step=0.5 if unid == "Kg" else 1.0,
-                            format="%.2f",
-                            key=f"pl_qtd_{mes_ano_ativo}_{idx_row}"
-                        )
+                        if eh_unidade_fracionada(unid):
+                            nova_qtd = float(st.number_input(
+                                f"{unid}",
+                                min_value=0.0,
+                                value=float(qtd_atual),
+                                step=0.5,
+                                format="%.2f",
+                                key=f"pl_qtd_{mes_ano_ativo}_{idx_row}"
+                            ))
+                        else:
+                            nova_qtd = float(st.number_input(
+                                f"{unid}",
+                                min_value=0,
+                                value=int(round(qtd_atual)),
+                                step=1,
+                                key=f"pl_qtd_{mes_ano_ativo}_{idx_row}"
+                            ))
                     with c3:
                         novo_pr = st.number_input(
                             "Preço Unit. (R$)",
@@ -1457,14 +1486,13 @@ elif menu == "Conferência (Mercado)":
                                 key=f"cf_chk_{mes_ano_ativo}_{idx_row}"
                             )
                         with cc2:
-                            qtd_real = st.number_input(
+                            qtd_real = float(st.number_input(
                                 f"{unid}",
-                                min_value=0.0,
-                                value=qtd_c_atual,
-                                step=1.0,
-                                format="%.2f",
+                                min_value=0,
+                                value=int(round(qtd_c_atual)),
+                                step=1,
                                 key=f"cf_qtd_{mes_ano_ativo}_{idx_row}"
-                            )
+                            ))
                         with cc3:
                             pr_real = st.number_input(
                                 "Preço Unit. (R$)",
@@ -1484,14 +1512,23 @@ elif menu == "Conferência (Mercado)":
                                 key=f"cf_chk_{mes_ano_ativo}_{idx_row}"
                             )
                         with cc2:
-                            qtd_real = st.number_input(
-                                f"{unid}",
-                                min_value=0.0,
-                                value=qtd_c_atual,
-                                step=0.1 if unid == "Kg" else 1.0,
-                                format="%.2f",
-                                key=f"cf_qtd_{mes_ano_ativo}_{idx_row}"
-                            )
+                            if eh_unidade_fracionada(unid):
+                                qtd_real = float(st.number_input(
+                                    f"{unid}",
+                                    min_value=0.0,
+                                    value=float(qtd_c_atual),
+                                    step=0.1,
+                                    format="%.2f",
+                                    key=f"cf_qtd_{mes_ano_ativo}_{idx_row}"
+                                ))
+                            else:
+                                qtd_real = float(st.number_input(
+                                    f"{unid}",
+                                    min_value=0,
+                                    value=int(round(qtd_c_atual)),
+                                    step=1,
+                                    key=f"cf_qtd_{mes_ano_ativo}_{idx_row}"
+                                ))
                         with cc3:
                             pr_real = st.number_input(
                                 "Preço Unit. (R$)",
@@ -1695,6 +1732,57 @@ elif menu == "O que Faltou Comprar":
                     salvar_resumo_pagamento(mes_ano_ativo, res_atu, ano_ativo)
                     st.session_state["msg_faltou"] = "✅ Itens atualizados como comprados!"
                     st.rerun()
+
+# ==============================================================================
+# GUIA 4: TABELA DE PREÇOS DO MÊS (EDIÇÃO RÁPIDA EM GRADE)
+# ==============================================================================
+elif menu == "Tabela de Preços do Mês":
+    st.markdown('<h2 style="margin-bottom: 0px;">💲 Tabela de Preços do Mês</h2>', unsafe_allow_html=True)
+    st.caption(f"Edite rapidamente os preços unitários de **{mes_ano_ativo}** (aceita números inteiros como `5`, com vírgula `35,00` ou ponto `35.00`).")
+
+    if "msg_precos" in st.session_state:
+        st.success(st.session_state.pop("msg_precos"))
+
+    df_grade_precos = pd.DataFrame({
+        "Setor": df_mes["Setor"],
+        "Produto": df_mes["Produto"],
+        "Marca": df_mes["Marca1"].apply(exibir_marca_limpa),
+        "Unidade": df_mes["Unidade"],
+        "Qtd_Planejada": df_mes["QtdPlanejada_num"].apply(formatar_qtd_br),
+        "Preco_Unit_RS": df_mes["PrecoUnit_num"].apply(lambda x: f"{safe_float(x):.2f}".replace(".", ","))
+    })
+
+    grade_editada = st.data_editor(
+        df_grade_precos,
+        hide_index=True,
+        use_container_width=True,
+        disabled=["Setor", "Produto", "Marca", "Unidade", "Qtd_Planejada"],
+        column_config={
+            "Setor": st.column_config.TextColumn("Setor"),
+            "Produto": st.column_config.TextColumn("Produto"),
+            "Marca": st.column_config.TextColumn("Marca"),
+            "Unidade": st.column_config.TextColumn("Unidade"),
+            "Qtd_Planejada": st.column_config.TextColumn("Qtd"),
+            "Preco_Unit_RS": st.column_config.TextColumn("Preço Unit. (R$)")
+        },
+        key=f"ed_precos_{mes_ano_ativo}"
+    )
+
+    if st.button("💾 Salvar Tabela de Preços do Mês", type="primary", use_container_width=True):
+        for idx_p, r_ed in grade_editada.iterrows():
+            pr_novo = safe_float(r_ed["Preco_Unit_RS"])
+            df_mes.at[idx_p, "PrecoUnit_num"] = pr_novo
+            if not df_mes.at[idx_p, "Comprado_bool"] or df_mes.at[idx_p, "PrecoRealUnit_num"] <= 0:
+                df_mes.at[idx_p, "PrecoRealUnit_num"] = pr_novo
+        salvar_df_mes(sheet_mes, df_mes, ano_ativo, atualizar_preco_catalogo=True)
+        novos_tot = calcular_totais_df(df_mes)
+        res_atu = obter_resumo_mes(mes_ano_ativo, ano_ativo)
+        if res_atu:
+            res_atu["TotalMercadoPlanejado"] = novos_tot["merc_plan"]
+            res_atu["TotalFarmaciaPlanejado"] = novos_tot["farm_plan"]
+            salvar_resumo_pagamento(mes_ano_ativo, res_atu, ano_ativo)
+        st.session_state["msg_precos"] = f"✅ Preços de {mes_ano_ativo} atualizados com sucesso!"
+        st.rerun()
 
 # ==============================================================================
 # GUIA 5: RELATÓRIO / COFRE HISTÓRICO (LAYOUT FIEL AO ESBOÇO DO USUÁRIO)
@@ -2060,34 +2148,66 @@ elif menu == "Cadastro de Produtos":
             "Codigo": None,
             "Ordem": st.column_config.NumberColumn("Ordem", min_value=1, step=1),
             "Setor": st.column_config.SelectboxColumn("Setor", options=SETORES_OFICIAIS, required=True),
-            "QtdPadrao": st.column_config.NumberColumn("Qtd Padrão", min_value=0.1, step=0.5, format="%.2f"),
+            "QtdPadrao": st.column_config.NumberColumn("Qtd Padrão", min_value=0.1, step=0.5),
             "PrecoRef": st.column_config.NumberColumn("Preço Ref (R$)", min_value=0.0, step=0.10, format="R$ %.2f"),
             "Ativo": st.column_config.CheckboxColumn("Ativo?")
         }
     )
 
     if st.button("💾 Salvar Alterações do Catálogo", type="primary", use_container_width=True):
+        mapa_qtd_antiga = {str(r["Codigo"]).strip(): safe_float(r["QtdPadrao_num"]) for _, r in df_cat_atual.iterrows()}
+        mapa_pr_antigo = {str(r["Codigo"]).strip(): safe_float(r["PrecoRef_num"]) for _, r in df_cat_atual.iterrows()}
+        mudancas_qtd = {}
+        mudancas_pr = {}
+
         sh_cat = obter_aba_catalogo(ano_ativo)
         linhas_c = [COLUNAS_CATALOGO]
         cat_ord = cat_editado.sort_values("Ordem").reset_index(drop=True)
         for idx_c, rc in cat_ord.iterrows():
             if not str(rc.get("Produto", "")).strip():
                 continue
+            cod_c = str(rc.get("Codigo", f"#{idx_c+1}")).strip()
+            nova_q = safe_float(rc.get("QtdPadrao", 1.0))
+            novo_p = safe_float(rc.get("PrecoRef", 0.0))
+            if cod_c in mapa_qtd_antiga and abs(nova_q - mapa_qtd_antiga[cod_c]) > 1e-4:
+                mudancas_qtd[cod_c] = nova_q
+            if cod_c in mapa_pr_antigo and abs(novo_p - mapa_pr_antigo[cod_c]) > 1e-4:
+                mudancas_pr[cod_c] = novo_p
+
             linhas_c.append([
                 str(int(safe_float(rc.get("Ordem", idx_c + 1)))),
-                str(rc.get("Codigo", f"#{idx_c+1}")),
+                cod_c,
                 str(rc.get("Setor", SETORES_OFICIAIS[-1])),
                 str(rc.get("Produto", "")).strip(),
                 str(rc.get("Marca1", "--")).strip() or "--",
                 str(rc.get("Marca2", "-")).strip() or "-",
-                formatar_num_planilha(safe_float(rc.get("QtdPadrao", 1.0)), 3),
-                str(rc.get("Unidade", "Un")).strip() or "Un",
-                formatar_num_planilha(safe_float(rc.get("PrecoRef", 0.0)), 2),
+                formatar_num_planilha(nova_q, 3),
+                str(rc.get("Unidade", "Unidade")).strip() or "Unidade",
+                formatar_num_planilha(novo_p, 2),
                 "TRUE" if safe_bool(rc.get("Ativo", True)) else "FALSE"
             ])
         executar_com_retry(sh_cat.clear)
         executar_com_retry(sh_cat.append_rows, linhas_c, value_input_option="USER_ENTERED")
+
+        # Propaga imediatamente alterações de Qtd Padrão ou Preço Ref para a aba do Mês Ativo
+        if mudancas_qtd or mudancas_pr:
+            alterou_mes = False
+            for idx_m, rm in df_mes.iterrows():
+                c_m = str(rm["Codigo"]).strip()
+                if c_m in mudancas_qtd:
+                    df_mes.at[idx_m, "QtdPlanejada_num"] = mudancas_qtd[c_m]
+                    if not df_mes.at[idx_m, "Comprado_bool"]:
+                        df_mes.at[idx_m, "QtdComprada_num"] = mudancas_qtd[c_m]
+                    alterou_mes = True
+                if c_m in mudancas_pr and mudancas_pr[c_m] > 0:
+                    df_mes.at[idx_m, "PrecoUnit_num"] = mudancas_pr[c_m]
+                    if not df_mes.at[idx_m, "Comprado_bool"]:
+                        df_mes.at[idx_m, "PrecoRealUnit_num"] = mudancas_pr[c_m]
+                    alterou_mes = True
+            if alterou_mes:
+                salvar_df_mes(sheet_mes, df_mes, ano_ativo, atualizar_preco_catalogo=False)
+
         limpar_cache_dados()
-        st.session_state["msg_cat"] = "✅ Catálogo de produtos atualizado com sucesso!"
+        st.session_state["msg_cat"] = "✅ Catálogo de produtos atualizado e sincronizado com o mês ativo!"
         st.rerun()
-# === FIM DO CÓDIGO - VERSÃO v.1.17 ===
+# === FIM DO CÓDIGO - VERSÃO v.1.18 ===
