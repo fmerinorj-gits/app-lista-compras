@@ -1,4 +1,5 @@
-# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.5 ===
+# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.15.1 ===
+import base64
 import math
 import time
 import streamlit as st
@@ -9,7 +10,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import gspread
 from google.oauth2.service_account import Credentials
 
-VERSAO_APP = "v.1.5"
+VERSAO_APP = "v.1.15.1"
 
 # Configuração de página idêntica ao padrão mobile/centered do App Luz & Água
 st.set_page_config(
@@ -22,6 +23,9 @@ st.set_page_config(
 # Estilo visual customizado (Tons de Azul/Verde, divisores do esboço e controles Verdes quando marcados)
 st.markdown("""
 <style>
+    :root {
+        --primary-color: #2ECC71 !important;
+    }
     /* Cartões de resumo e alertas */
     .card-azul {
         background-color: rgba(30, 136, 229, 0.12);
@@ -83,34 +87,65 @@ st.markdown("""
         margin-bottom: 4px;
         margin-top: 6px;
     }
-    /* Força cor VERDE (#2ECC71) nos Checkboxes marcados e no Radio quando "Comprar" (2ª opção) está selecionado */
-    div[data-testid="stCheckbox"] label:has(input:checked) span[data-baseweb="checkbox"],
-    span[data-baseweb="checkbox"]:has(input:checked) {
+    /* Força cor VERDE (#2ECC71) nos Checkboxes marcados (Conferência / Faltantes) */
+    label[data-baseweb="checkbox"]:has(input:checked) > span:first-of-type,
+    div[data-testid="stCheckbox"] label:has(input:checked) > span:first-of-type {
         background-color: #2ECC71 !important;
         border-color: #2ECC71 !important;
     }
-    div[role="radiogroup"] > label:nth-of-type(2):has(input:checked) div:first-child {
+    /* Força cor VERDE (#2ECC71) quando a 2ª opção ("Comprar") do Radio está marcada no Planejamento */
+    div[role="radiogroup"] > label[data-baseweb="radio"]:nth-of-type(2):has(input:checked) > div:first-of-type {
         background-color: #2ECC71 !important;
         border-color: #2ECC71 !important;
     }
-    input[type="checkbox"], input[type="radio"] {
-        accent-color: #2ECC71 !important;
+    div[role="radiogroup"] > label[data-baseweb="radio"]:nth-of-type(2):has(input:checked) p {
+        color: #2ECC71 !important;
+        font-weight: 700 !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# === LOGOTIPOS VETORIAIS NITIDOS (SVG DATA URI) PARA OS BANCOS ===
-LOGO_BRADESCO = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><rect width='48' height='48' rx='10' fill='%23CC092F'/><path d='M10 27C10 15 24 9 36 17C28 14 16 17 15 27C19 21 31 20 38 26C38 30 35 34 31 36C34 31 32 25 23 25C16 25 13 30 13 34' stroke='white' stroke-width='3.4' fill='none' stroke-linecap='round'/><rect x='20' y='31' width='3.5' height='10' rx='1' fill='white'/><rect x='25.5' y='28' width='3.5' height='13' rx='1' fill='white'/></svg>"
+# === LOGOTIPOS VETORIAIS EM BASE64 (PROPORÇÕES FIÉIS ÀS IMAGENS ANEXADAS) ===
+def _svg_to_base64(svg_str):
+    b64 = base64.b64encode(svg_str.encode("utf-8")).decode("utf-8")
+    return f"data:image/svg+xml;base64,{b64}"
 
-LOGO_MERCADOPAGO = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><ellipse cx='24' cy='24' rx='22' ry='17' fill='%2300B1EA' stroke='%23002B7F' stroke-width='3'/><path d='M6 21C13 21 16 15 24 15C31 15 35 20 42 20' stroke='white' stroke-width='4.5' fill='none'/><path d='M14 25L21 19C24 17 28 18 31 22L36 27C33 32 26 34 19 31Z' fill='white' stroke='%23002B7F' stroke-width='2.5' stroke-linejoin='round'/><circle cx='17' cy='29' r='2.5' fill='white' stroke='%23002B7F' stroke-width='2'/><circle cx='21' cy='31' r='2.5' fill='white' stroke='%23002B7F' stroke-width='2'/><circle cx='25' cy='32' r='2.5' fill='white' stroke='%23002B7F' stroke-width='2'/></svg>"
+# Bradesco: Fundo branco arredondado com o símbolo vermelho oficial em alta nitidez
+LOGO_BRADESCO = _svg_to_base64("""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="2"/>
+  <path d="M12 36 C12 18, 34 10, 50 22 C38 16, 20 21, 19 36 C25 27, 42 25, 53 34 C53 41, 48 47, 41 49 C46 43, 44 33, 31 33 C22 33, 17 39, 17 45" stroke="#CC092F" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <rect x="27" y="40" width="4.8" height="15" rx="1.5" fill="#CC092F"/>
+  <rect x="34.5" y="36" width="4.8" height="19" rx="1.5" fill="#CC092F"/>
+</svg>
+""")
 
-LOGO_NUBANK = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><rect width='48' height='48' rx='10' fill='%23820AD1'/><path d='M9 32V20C9 15.5 12 13 16 13C20 13 22.5 15.5 22.5 20V32' stroke='white' stroke-width='4.2' fill='none' stroke-linecap='round'/><path d='M26.5 14V26C26.5 30.5 29.5 33 33.5 33C37.5 33 40 30.5 40 26V14' stroke='white' stroke-width='4.2' fill='none' stroke-linecap='round'/></svg>"
+# Mercado Pago: Elipse azul-celeste com borda azul-marinho e aperto de mãos branco no centro
+LOGO_MERCADOPAGO = _svg_to_base64("""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <ellipse cx="32" cy="32" rx="29" ry="22" fill="#00B1EA" stroke="#002B7F" stroke-width="3.8"/>
+  <path d="M7 27 C16 27, 21 19, 32 19 C43 19, 48 27, 57 27" stroke="#FFFFFF" stroke-width="5.5" fill="none"/>
+  <path d="M17 33 L27 24 C31 21, 37 22, 41 28 L48 35 C44 42, 34 45, 24 41 Z" fill="#FFFFFF" stroke="#002B7F" stroke-width="3.2" stroke-linejoin="round"/>
+  <circle cx="22" cy="38" r="3.2" fill="#FFFFFF" stroke="#002B7F" stroke-width="2.5"/>
+  <circle cx="27.5" cy="40.5" r="3.2" fill="#FFFFFF" stroke="#002B7F" stroke-width="2.5"/>
+  <circle cx="33" cy="42" r="3.2" fill="#FFFFFF" stroke="#002B7F" stroke-width="2.5"/>
+</svg>
+""")
+
+# Nubank: Fundo roxo oficial (#820AD1) com as letras "nu" brancas centralizadas
+LOGO_NUBANK = _svg_to_base64("""
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#820AD1"/>
+  <path d="M12 43 V27 C12 20.5, 16.5 17, 22 17 C27.5 17, 31 20.5, 31 27 V43" stroke="#FFFFFF" stroke-width="5.8" fill="none" stroke-linecap="round"/>
+  <path d="M35 19 V35 C35 41.5, 39.5 45, 45 45 C50.5 45, 54 41.5, 54 35 V19" stroke="#FFFFFF" stroke-width="5.8" fill="none" stroke-linecap="round"/>
+</svg>
+""")
 
 def label_banco_html(logo_uri, nome_banco, modalidade):
     cor_mod = "#4FC3F7" if "DÉBITO" in modalidade.upper() else "#FFB74D"
     return f"""
     <div class="bank-label">
-        <img src="{logo_uri}" width="24" height="24" style="border-radius:5px; box-shadow: 0 1px 3px rgba(0,0,0,0.4);">
+        <img src="{logo_uri}" width="26" height="26" style="border-radius:6px; box-shadow: 0 1px 4px rgba(0,0,0,0.45);">
         <span>{nome_banco} — <span style="color:{cor_mod};">{modalidade}</span> (R$)</span>
     </div>
     """
@@ -516,11 +551,11 @@ def obter_aba_mes(mes_ano_str, ano_str=None):
         sheet = executar_com_retry(sp.worksheet, titulo_aba)
         vals = executar_com_retry(sheet.get_values)
         if len(vals) > 1:
-            return sheet
+            return sheet, vals
     except gspread.WorksheetNotFound:
         sheet = criar_aba_no_inicio(sp, titulo_aba, linhas="160", colunas="18")
 
-    # Se a aba do mês acabou de ser criada (ou estava vazia), popula com o Catálogo Oficial
+    # Se a aba do mês acabou de ser criada (ou estava vazia), popula com o Catálogo Oficial em 1 única chamada
     df_cat = carregar_df_catalogo(ano_str)
     df_cat_ativos = df_cat[df_cat["Ativo_bool"]].copy()
     linhas_mes = [COLUNAS_MES]
@@ -535,11 +570,11 @@ def obter_aba_mes(mes_ano_str, ano_str=None):
             str(r["Marca1"]),
             str(r["Marca2"]),
             str(r["Unidade"]),
-            "FALSE",  # Planejado (azul)
+            "FALSE",  # Planejado
             formatar_num_planilha(qtd_p, 3),
             formatar_num_planilha(preco_ref, 2),
             "0,00",   # Subtotal Planejado
-            "FALSE",  # Comprado (verde)
+            "FALSE",  # Comprado
             formatar_num_planilha(qtd_p, 3),
             formatar_num_planilha(preco_ref, 2),
             "0,00",   # Subtotal Real
@@ -547,12 +582,11 @@ def obter_aba_mes(mes_ano_str, ano_str=None):
         ])
     executar_com_retry(sheet.clear)
     executar_com_retry(sheet.append_rows, linhas_mes, value_input_option="USER_ENTERED")
-    return sheet
+    return sheet, linhas_mes
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def ler_dados_aba_mes_cached(mes_ano_str, ano_str=None):
-    sheet = obter_aba_mes(mes_ano_str, ano_str)
-    vals = executar_com_retry(sheet.get_values)
+    sheet, vals = obter_aba_mes(mes_ano_str, ano_str)
     if len(vals) > 1:
         df = pd.DataFrame(vals[1:], columns=vals[0])
     else:
@@ -561,7 +595,7 @@ def ler_dados_aba_mes_cached(mes_ano_str, ano_str=None):
         if c not in df.columns:
             df[c] = ""
 
-    # Sincroniza nomes/unidades/ordem do Catálogo v.1.5 e ajusta Arroz (5Kg -> 1 Pacote de 5Kg)
+    # Sincroniza nomes/unidades/ordem do Catálogo e ajusta Arroz (5Kg -> 1 Pacote de 5Kg)
     df_cat = carregar_df_catalogo(ano_str)
     if "#22" in df["Codigo"].astype(str).str.strip().values:
         df = df[df["Codigo"].astype(str).str.strip() != "#22"].copy()
@@ -631,19 +665,27 @@ def ler_dados_aba_mes_cached(mes_ano_str, ano_str=None):
 
     if precisa_salvar_migracao:
         try:
-            salvar_df_mes(sheet, df, ano_str, atualizar_preco_catalogo=False)
+            salvar_df_mes(mes_ano_str, df, ano_str, atualizar_preco_catalogo=False)
         except Exception:
             pass
 
     return df
 
 def carregar_df_mes(mes_ano_str, ano_str=None):
+    """Retorna uma cópia rápida em memória (0 chamadas extras de API durante a navegação)."""
     df = ler_dados_aba_mes_cached(mes_ano_str, ano_str).copy()
-    sp = get_spreadsheet_por_ano(ano_str)
-    sheet = executar_com_retry(sp.worksheet, f"{mes_ano_str} Compras")
-    return df, sheet
+    return df, mes_ano_str
 
-def salvar_df_mes(sheet, df_mes, ano_str=None, atualizar_preco_catalogo=True):
+def salvar_df_mes(sheet_ou_mes_ano, df_mes, ano_str=None, atualizar_preco_catalogo=True):
+    if isinstance(sheet_ou_mes_ano, str):
+        mes_ano_ref = sheet_ou_mes_ano
+        if not ano_str:
+            ano_str = mes_ano_ref.split(" ")[-1] if " " in mes_ano_ref else agora_br().strftime("%Y")
+        sp = get_spreadsheet_por_ano(ano_str)
+        sheet = executar_com_retry(sp.worksheet, f"{mes_ano_ref} Compras")
+    else:
+        sheet = sheet_ou_mes_ano
+
     linhas_salvar = [COLUNAS_MES]
     mapa_precos_ref = {}
     for _, r in df_mes.sort_values("Ordem_num").iterrows():
@@ -826,14 +868,13 @@ except Exception as e:
     st.error(f"⚠️ Não foi possível conectar à planilha 'Compras {ano_corrente}'. Verifique se o e-mail do robô foi compartilhado na pasta 'mercado' e se o Secrets está configurado. Detalhe: {e}")
     st.stop()
 
-mes_ano_ativo = config_dict.get("mes_ano_ativo", mes_padrao_inicial)
-if not mes_ano_ativo or " " not in mes_ano_ativo:
-    mes_ano_ativo = mes_padrao_inicial
-# Se estava no mês 10 2026 sem compras fechadas e nunca migrou para 11 2026, aplica 11 2026 uma única vez
-if mes_ano_ativo == "10 2026" and config_dict.get("migrado_11_2026") != "TRUE":
-    mes_ano_ativo = "11 2026"
-    salvar_configs({"mes_ano_ativo": "11 2026", "migrado_11_2026": "TRUE"}, "2026")
+if "mes_ano_ativo_mem" not in st.session_state:
+    mes_cfg = config_dict.get("mes_ano_ativo", mes_padrao_inicial)
+    if not mes_cfg or " " not in mes_cfg or mes_cfg == "10 2026":
+        mes_cfg = mes_padrao_inicial
+    st.session_state["mes_ano_ativo_mem"] = mes_cfg
 
+mes_ano_ativo = st.session_state["mes_ano_ativo_mem"]
 ano_ativo = mes_ano_ativo.split(" ")[-1]
 
 # Lista de meses disponíveis (começando em 11 2026, mantendo 10 2026 ao final caso queira consultar)
@@ -848,7 +889,7 @@ if "10 2026" not in opcoes_meses:
 if mes_ano_ativo not in opcoes_meses:
     opcoes_meses.insert(0, mes_ano_ativo)
 
-# === MENU LATERAL COM RECOLHIMENTO AUTOMÁTICO (PADRÃO LUZ & ÁGUA) ===
+# === MENU LATERAL COM RECOLHIMENTO AUTOMÁTICO (SEM SELETOR DUPLICADO DE MÊS) ===
 if "recolher_menu" not in st.session_state:
     st.session_state["recolher_menu"] = 0
 if "fechar_menu_agora" not in st.session_state:
@@ -858,17 +899,8 @@ def acionar_fechamento_menu():
     st.session_state["recolher_menu"] += 1
     st.session_state["fechar_menu_agora"] = True
 
-st.sidebar.markdown("### 🛒Compras")
-
-novo_mes_sel_side = st.sidebar.selectbox(
-    "📅 Mês/Ano Ativo:",
-    opcoes_meses,
-    index=opcoes_meses.index(mes_ano_ativo),
-    key="sel_mes_sidebar"
-)
-if novo_mes_sel_side != mes_ano_ativo:
-    salvar_configs({"mes_ano_ativo": novo_mes_sel_side}, novo_mes_sel_side.split(" ")[-1])
-    st.rerun()
+st.sidebar.markdown("### 🛒 Compras")
+st.sidebar.caption(f"📅 Mês Ativo: **{mes_ano_ativo}**")
 
 menu = st.sidebar.radio(
     "Navegação",
@@ -920,7 +952,41 @@ if st.session_state.get("fechar_menu_agora", False):
         height=0
     )
 
-# Carrega os dados do mês ativo
+# Script leve para garantir que os Checkboxes marcados e os Radios "Comprar" fiquem 100% Verdes (#2ECC71) em qualquer navegador
+components.html(
+    """
+    <script>
+    (function() {
+        try {
+            const doc = window.parent.document;
+            let styleEl = doc.getElementById('estilo-verde-compras');
+            if (!styleEl) {
+                styleEl = doc.createElement('style');
+                styleEl.id = 'estilo-verde-compras';
+                styleEl.innerHTML = `
+                    label[data-baseweb="checkbox"]:has(input:checked) > span:first-of-type {
+                        background-color: #2ECC71 !important;
+                        border-color: #2ECC71 !important;
+                    }
+                    div[role="radiogroup"] > label[data-baseweb="radio"]:nth-of-type(2):has(input:checked) > div:first-of-type {
+                        background-color: #2ECC71 !important;
+                        border-color: #2ECC71 !important;
+                    }
+                    div[role="radiogroup"] > label[data-baseweb="radio"]:nth-of-type(2):has(input:checked) p {
+                        color: #2ECC71 !important;
+                        font-weight: 700 !important;
+                    }
+                `;
+                doc.head.appendChild(styleEl);
+            }
+        } catch (e) {}
+    })();
+    </script>
+    """,
+    height=0
+)
+
+# Carrega os dados do mês ativo (em cache rápido)
 df_mes, sheet_mes = carregar_df_mes(mes_ano_ativo, ano_ativo)
 totais_atuais = calcular_totais_df(df_mes)
 resumo_salvo = obter_resumo_mes(mes_ano_ativo, ano_ativo)
@@ -946,32 +1012,34 @@ elif config_dict.get(f"data_compra_{mes_ano_ativo}"):
 if menu == "Planejamento (Casa)":
     st.markdown('<h2 style="text-align: center; margin-bottom: 10px;">📝 Planejamento (Pré-Compra)</h2>', unsafe_allow_html=True)
 
+    def ao_trocar_mes_planejamento():
+        novo_m = st.session_state.get("sel_mes_topo_plan", mes_ano_ativo)
+        if novo_m and novo_m != st.session_state.get("mes_ano_ativo_mem"):
+            st.session_state["mes_ano_ativo_mem"] = novo_m
+            try:
+                salvar_configs({"mes_ano_ativo": novo_m}, novo_m.split(" ")[-1])
+            except Exception:
+                pass
+
     # Cabeçalho centralizado exatamente como no esboço: Mês/Ano Ativo + Data Real da Compra (padrão dia 05)
-    _, col_hdr_mes, col_hdr_dt, _ = st.columns([0.6, 1.4, 1.4, 0.6])
-    with col_hdr_mes:
-        mes_topo_sel = st.selectbox(
-            "📅 Mês/Ano Ativo:",
-            opcoes_meses,
-            index=opcoes_meses.index(mes_ano_ativo),
-            key="sel_mes_topo_plan"
-        )
-        if mes_topo_sel != mes_ano_ativo:
-            salvar_configs({"mes_ano_ativo": mes_topo_sel}, mes_topo_sel.split(" ")[-1])
-            st.rerun()
-    with col_hdr_dt:
-        dt_topo_plan = st.date_input(
-            "Data Real da Compra",
-            value=data_compra_padrao_mes,
-            format="DD/MM/YYYY",
-            key=f"dt_topo_plan_{mes_ano_ativo}"
-        )
-        dt_topo_str = dt_topo_plan.strftime("%d/%m/%Y")
-        if dt_topo_str != data_compra_padrao_mes.strftime("%d/%m/%Y"):
-            salvar_configs({f"data_compra_{mes_ano_ativo}": dt_topo_str}, ano_ativo)
-            if resumo_salvo:
-                resumo_salvo["DataCompra"] = dt_topo_str
-                salvar_resumo_pagamento(mes_ano_ativo, resumo_salvo, ano_ativo)
-            st.rerun()
+    _, col_centro_hdr, _ = st.columns([0.3, 2.4, 0.3])
+    with col_centro_hdr:
+        col_hdr_mes, col_hdr_dt = st.columns(2)
+        with col_hdr_mes:
+            st.selectbox(
+                "📅 Mês/Ano Ativo:",
+                opcoes_meses,
+                index=opcoes_meses.index(mes_ano_ativo),
+                key="sel_mes_topo_plan",
+                on_change=ao_trocar_mes_planejamento
+            )
+        with col_hdr_dt:
+            dt_topo_plan = st.date_input(
+                "Data Real da Compra",
+                value=data_compra_padrao_mes,
+                format="DD/MM/YYYY",
+                key=f"dt_topo_plan_{mes_ano_ativo}"
+            )
 
     st.markdown('<hr class="divisor-secao">', unsafe_allow_html=True)
 
@@ -1105,7 +1173,7 @@ if menu == "Planejamento (Casa)":
                         )
                     with c2:
                         nova_qtd = st.number_input(
-                            f"({unid})",
+                            f"{unid}",
                             min_value=0.0,
                             value=qtd_atual,
                             step=0.5 if unid == "Kg" else 1.0,
@@ -1176,8 +1244,10 @@ if menu == "Planejamento (Casa)":
 
         salvar_df_mes(sheet_mes, df_mes, ano_ativo, atualizar_preco_catalogo=True)
         novos_tot = calcular_totais_df(df_mes)
+        dt_plan_str = dt_topo_plan.strftime("%d/%m/%Y")
+        salvar_configs({f"data_compra_{mes_ano_ativo}": dt_plan_str, "mes_ano_ativo": mes_ano_ativo}, ano_ativo)
         salvar_resumo_pagamento(mes_ano_ativo, {
-            "DataCompra": dt_topo_plan.strftime("%d/%m/%Y"),
+            "DataCompra": dt_plan_str,
             "TotalMercadoPlanejado": novos_tot["merc_plan"],
             "TotalMercadoReal": novos_tot["merc_real"],
             "TotalFarmaciaPlanejado": novos_tot["farm_plan"],
@@ -1346,7 +1416,7 @@ elif menu == "Conferência (Mercado)":
                             )
                         with cc2:
                             qtd_real = st.number_input(
-                                f"({unid})",
+                                f"{unid}",
                                 min_value=0.0,
                                 value=qtd_c_atual,
                                 step=1.0,
@@ -1373,7 +1443,7 @@ elif menu == "Conferência (Mercado)":
                             )
                         with cc2:
                             qtd_real = st.number_input(
-                                f"({unid})",
+                                f"{unid}",
                                 min_value=0.0,
                                 value=qtd_c_atual,
                                 step=0.1 if unid == "Kg" else 1.0,
@@ -1823,4 +1893,4 @@ elif menu == "Cadastro de Produtos":
         limpar_cache_dados()
         st.session_state["msg_cat"] = "✅ Catálogo de produtos atualizado com sucesso!"
         st.rerun()
-# === FIM DO CÓDIGO - VERSÃO v.1.4 ===
+# === FIM DO CÓDIGO - VERSÃO v.1.15.1 ===
