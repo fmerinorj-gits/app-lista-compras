@@ -792,12 +792,12 @@ if novo_mes_sel != mes_ano_ativo:
 menu = st.sidebar.radio(
     "Navegação",
     [
-        "1. Planejamento (Casa)",
-        "2. Conferência (Mercado)",
-        "3. O que Faltou Comprar",
-        "4. Tabela de Preços do Mês",
-        "5. Relatório / Histórico",
-        "6. Cadastro de Produtos"
+        "Planejamento (Casa)",
+        "Conferência (Mercado)",
+        "O que Faltou Comprar",
+        "Tabela de Preços do Mês",
+        "Relatório / Histórico",
+        "Cadastro de Produtos"
     ],
     on_change=acionar_fechamento_menu
 )
@@ -847,9 +847,8 @@ resumo_salvo = obter_resumo_mes(mes_ano_ativo, ano_ativo)
 # ==============================================================================
 # GUIA 1: PLANEJAMENTO (CASA - PRÉ-COMPRA COM SELETOR AZUL)
 # ==============================================================================
-if menu == "1. Planejamento (Casa)":
-    st.markdown('<h2 style="margin-bottom: 0px;">📝 1. Planejamento (Pré-Compra)</h2>', unsafe_allow_html=True)
-    st.caption(f"📂 Planilha: **Compras {ano_ativo}** | Guia: **{mes_ano_ativo} Compras** | {VERSAO_APP}")
+if menu == "Planejamento (Casa)":
+    st.markdown('<h2 style="margin-bottom: 0px;">📝 Planejamento (Pré-Compra)</h2>', unsafe_allow_html=True)
 
     if "msg_sucesso_plan" in st.session_state:
         st.success(st.session_state.pop("msg_sucesso_plan"))
@@ -859,7 +858,7 @@ if menu == "1. Planejamento (Casa)":
     with c_top1:
         st.markdown(f"""
         <div class="card-farmacia">
-            <b>💊 1º Parada: Farmácia (Separado)</b><br>
+            <b>💊 Farmácia (Separado)</b><br>
             Itens marcados: <b>{totais_atuais['itens_plan_farm']}</b><br>
             Previsto Farmácia: <b>{formatar_moeda_br(totais_atuais['farm_plan'])}</b>
         </div>
@@ -867,7 +866,7 @@ if menu == "1. Planejamento (Casa)":
     with c_top2:
         st.markdown(f"""
         <div class="card-azul">
-            <b>🛒 2º Parada: Mercado (+ Extras)</b><br>
+            <b>🛒 Mercado (+ Extras)</b><br>
             Itens marcados (🔵): <b>{totais_atuais['itens_plan_merc']}</b><br>
             Previsto Mercado: <b>{formatar_moeda_br(totais_atuais['merc_plan'])}</b>
         </div>
@@ -1039,9 +1038,8 @@ if menu == "1. Planejamento (Casa)":
 # ==============================================================================
 # GUIA 2: CONFERÊNCIA (NO MERCADO / RETORNO - COM TICK VERDE)
 # ==============================================================================
-elif menu == "2. Conferência (Mercado)":
-    st.markdown('<h2 style="margin-bottom: 0px;">✅ 2. Conferência (Mercado / Retorno)</h2>', unsafe_allow_html=True)
-    st.caption(f"Guia ativa: **{mes_ano_ativo} Compras** — Marque o Tick Verde (✅) e ajuste pesos/valores reais.")
+elif menu == "Conferência (Mercado)":
+    st.markdown('<h2 style="margin-bottom: 0px;">✅ Conferência (Mercado / Retorno)</h2>', unsafe_allow_html=True)
 
     if "msg_sucesso_conf" in st.session_state:
         st.success(st.session_state.pop("msg_sucesso_conf"))
@@ -1050,7 +1048,7 @@ elif menu == "2. Conferência (Mercado)":
     with c_res1:
         st.markdown(f"""
         <div class="card-farmacia">
-            <b>💊 Farmácia (1º Parada)</b><br>
+            <b>💊 Farmácia</b><br>
             Comprados: <b>{totais_atuais['itens_comp_farm']} / {totais_atuais['itens_plan_farm']}</b><br>
             Gasto Real: <b>{formatar_moeda_br(totais_atuais['farm_real'])}</b> <span class="item-sub">(Prev: {formatar_moeda_br(totais_atuais['farm_plan'])})</span>
         </div>
@@ -1141,7 +1139,7 @@ elif menu == "2. Conferência (Mercado)":
                 st.markdown('<hr style="margin: 6px 0px; opacity: 0.2;">', unsafe_allow_html=True)
 
         if not algum_item_exibido:
-            st.warning("Nenhum item planejado para este filtro. Desmarque a opção 'Mostrar só itens planejados' acima ou vá na guia 1. Planejamento.")
+            st.warning("Nenhum item planejado para este filtro. Desmarque a opção 'Mostrar só itens planejados' acima ou vá na guia Planejamento (Casa).")
 
         st.markdown("### 🧾 Fechamento do Caixa (Como foi pago)")
         data_c_padrao = hoje_br()
@@ -1228,8 +1226,8 @@ elif menu == "2. Conferência (Mercado)":
 # ==============================================================================
 # GUIA 3: O QUE FALTOU COMPRAR (PENDÊNCIAS DO MÊS)
 # ==============================================================================
-elif menu == "3. O que Faltou Comprar":
-    st.markdown('<h2 style="margin-bottom: 0px;">⚠️ 3. O que Faltou Comprar</h2>', unsafe_allow_html=True)
+elif menu == "O que Faltou Comprar":
+    st.markdown('<h2 style="margin-bottom: 0px;">⚠️ O que Faltou Comprar</h2>', unsafe_allow_html=True)
     st.caption(f"Itens marcados no planejamento (🔵) de **{mes_ano_ativo}** que não foram comprados ou vieram em quantidade menor.")
 
     if "msg_faltou" in st.session_state:
@@ -1303,8 +1301,8 @@ elif menu == "3. O que Faltou Comprar":
 # ==============================================================================
 # GUIA 4: TABELA DE PREÇOS DO MÊS (ATUALIZAÇÃO RÁPIDA DE VALORES)
 # ==============================================================================
-elif menu == "4. Tabela de Preços do Mês":
-    st.markdown('<h2 style="margin-bottom: 0px;">💲 4. Tabela de Preços do Mês</h2>', unsafe_allow_html=True)
+elif menu == "Tabela de Preços do Mês":
+    st.markdown('<h2 style="margin-bottom: 0px;">💲 Tabela de Preços do Mês</h2>', unsafe_allow_html=True)
     st.caption(f"Insira ou atualize rapidamente os preços unitários de **{mes_ano_ativo}** para calcular a previsão exata da compra.")
 
     if "msg_precos" in st.session_state:
@@ -1364,8 +1362,8 @@ elif menu == "4. Tabela de Preços do Mês":
 # ==============================================================================
 # GUIA 5: RELATÓRIO / COFRE HISTÓRICO (COMPARATIVO ENTRE MESES E CARTÕES)
 # ==============================================================================
-elif menu == "5. Relatório / Histórico":
-    st.markdown('<h2 style="margin-bottom: 0px;">📊 5. Relatório / Cofre Histórico</h2>', unsafe_allow_html=True)
+elif menu == "Relatório / Histórico":
+    st.markdown('<h2 style="margin-bottom: 0px;">📊 Relatório / Cofre Histórico</h2>', unsafe_allow_html=True)
     st.caption("Comparativo mensal de gastos (Mercado vs. Farmácia) e divisão por forma de pagamento (Dinheiro e Cartões Débito/Crédito).")
 
     ano_hist_sel = st.selectbox("Consultar Planilha Anual:", [str(a) for a in range(2026, 2031)], index=0)
@@ -1423,8 +1421,8 @@ elif menu == "5. Relatório / Histórico":
 # ==============================================================================
 # GUIA 6: CADASTRO DE PRODUTOS E DEPARTAMENTOS (CATÁLOGO FIXO)
 # ==============================================================================
-elif menu == "6. Cadastro de Produtos":
-    st.markdown('<h2 style="margin-bottom: 0px;">🗂️ 6. Cadastro de Produtos e Circuito</h2>', unsafe_allow_html=True)
+elif menu == "Cadastro de Produtos":
+    st.markdown('<h2 style="margin-bottom: 0px;">🗂️ Cadastro de Produtos e Circuito</h2>', unsafe_allow_html=True)
     st.caption("Adicione novos produtos fixos escolhendo em qual Departamento/Setor do seu circuito eles entram, ou edite marcas, quantidades e unidades.")
 
     if "msg_cat" in st.session_state:
