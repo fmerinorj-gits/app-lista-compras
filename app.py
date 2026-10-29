@@ -1,4 +1,4 @@
-# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.4 ===
+# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.5 ===
 import math
 import time
 import streamlit as st
@@ -9,7 +9,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import gspread
 from google.oauth2.service_account import Credentials
 
-VERSAO_APP = "v.1.4"
+VERSAO_APP = "v.1.5"
 
 # Configuração de página idêntica ao padrão mobile/centered do App Luz & Água
 st.set_page_config(
@@ -19,7 +19,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Estilo visual customizado (Tons de Azul para Planejamento e Verde para Conferência)
+# Estilo visual customizado (Tons de Azul/Verde, divisores do esboço e controles Verdes quando marcados)
 st.markdown("""
 <style>
     /* Cartões de resumo e alertas */
@@ -66,8 +66,54 @@ st.markdown("""
         color: #778DA9;
         font-size: 0.85rem;
     }
+    /* Divisores visuais horizontais em tom azul-escuro suave (igual ao esboço) */
+    .divisor-secao {
+        border: 0;
+        height: 2px;
+        background: linear-gradient(90deg, rgba(65, 90, 119, 0.15) 0%, rgba(65, 90, 119, 0.65) 50%, rgba(65, 90, 119, 0.15) 100%);
+        margin: 14px 0px;
+    }
+    /* Logos de bancos alinhados com os rótulos de pagamento */
+    .bank-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+        font-size: 0.92rem;
+        margin-bottom: 4px;
+        margin-top: 6px;
+    }
+    /* Força cor VERDE (#2ECC71) nos Checkboxes marcados e no Radio quando "Comprar" (2ª opção) está selecionado */
+    div[data-testid="stCheckbox"] label:has(input:checked) span[data-baseweb="checkbox"],
+    span[data-baseweb="checkbox"]:has(input:checked) {
+        background-color: #2ECC71 !important;
+        border-color: #2ECC71 !important;
+    }
+    div[role="radiogroup"] > label:nth-of-type(2):has(input:checked) div:first-child {
+        background-color: #2ECC71 !important;
+        border-color: #2ECC71 !important;
+    }
+    input[type="checkbox"], input[type="radio"] {
+        accent-color: #2ECC71 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+# === LOGOTIPOS VETORIAIS NITIDOS (SVG DATA URI) PARA OS BANCOS ===
+LOGO_BRADESCO = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><rect width='48' height='48' rx='10' fill='%23CC092F'/><path d='M10 27C10 15 24 9 36 17C28 14 16 17 15 27C19 21 31 20 38 26C38 30 35 34 31 36C34 31 32 25 23 25C16 25 13 30 13 34' stroke='white' stroke-width='3.4' fill='none' stroke-linecap='round'/><rect x='20' y='31' width='3.5' height='10' rx='1' fill='white'/><rect x='25.5' y='28' width='3.5' height='13' rx='1' fill='white'/></svg>"
+
+LOGO_MERCADOPAGO = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><ellipse cx='24' cy='24' rx='22' ry='17' fill='%2300B1EA' stroke='%23002B7F' stroke-width='3'/><path d='M6 21C13 21 16 15 24 15C31 15 35 20 42 20' stroke='white' stroke-width='4.5' fill='none'/><path d='M14 25L21 19C24 17 28 18 31 22L36 27C33 32 26 34 19 31Z' fill='white' stroke='%23002B7F' stroke-width='2.5' stroke-linejoin='round'/><circle cx='17' cy='29' r='2.5' fill='white' stroke='%23002B7F' stroke-width='2'/><circle cx='21' cy='31' r='2.5' fill='white' stroke='%23002B7F' stroke-width='2'/><circle cx='25' cy='32' r='2.5' fill='white' stroke='%23002B7F' stroke-width='2'/></svg>"
+
+LOGO_NUBANK = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><rect width='48' height='48' rx='10' fill='%23820AD1'/><path d='M9 32V20C9 15.5 12 13 16 13C20 13 22.5 15.5 22.5 20V32' stroke='white' stroke-width='4.2' fill='none' stroke-linecap='round'/><path d='M26.5 14V26C26.5 30.5 29.5 33 33.5 33C37.5 33 40 30.5 40 26V14' stroke='white' stroke-width='4.2' fill='none' stroke-linecap='round'/></svg>"
+
+def label_banco_html(logo_uri, nome_banco, modalidade):
+    cor_mod = "#4FC3F7" if "DÉBITO" in modalidade.upper() else "#FFB74D"
+    return f"""
+    <div class="bank-label">
+        <img src="{logo_uri}" width="24" height="24" style="border-radius:5px; box-shadow: 0 1px 3px rgba(0,0,0,0.4);">
+        <span>{nome_banco} — <span style="color:{cor_mod};">{modalidade}</span> (R$)</span>
+    </div>
+    """
 
 # === FUSO HORÁRIO DE BRASÍLIA (UTC-3) ===
 FUSO_BR = timezone(timedelta(hours=-3))
@@ -130,6 +176,17 @@ def exibir_marca_limpa(marca_str):
     if m in ["", "-", "--", "nan", "None"]:
         return "Sem marca específica"
     return m
+
+def data_padrao_dia_5(mes_ano_str):
+    """Retorna o dia 05 do Mês/Ano ativo como data padrão de compra (5º dia útil / pagamento)."""
+    try:
+        partes = str(mes_ano_str).strip().split(" ")
+        m = int(partes[0])
+        a = int(partes[1])
+        return date(a, m, 5)
+    except Exception:
+        h = hoje_br()
+        return date(h.year, h.month, 5)
 
 # === LISTA OFICIAL DOS DEPARTAMENTOS E DOS 84 PRODUTOS (CIRCUITO DO MERCADO) ===
 SETORES_OFICIAIS = [
@@ -247,14 +304,14 @@ CATALOGO_INICIAL = [
     (74, "#57", "🥫 Setor J: Mercearia (Latas e Condimentos)", "Queijo ralado", "Vigor", "Président (100g)", 1.0, "Unidade (100g)"),
 
     # 🌾 SETOR K: MERCEARIA (GRÃOS)
-    (75, "#1", "🌾 Setor K: Mercearia (Grãos)", "Arroz Branco", "Tio João", "Tio Mingote", 5.0, "Kg"),
+    (75, "#1", "🌾 Setor K: Mercearia (Grãos)", "Arroz Branco", "Tio João", "Tio Mingote", 1.0, "Pacote (5Kg)"),
     (76, "#2", "🌾 Setor K: Mercearia (Grãos)", "Feijão manteiga ou vermelho", "--", "Pacote 0,5 Kg", 1.0, "Pacote (0,5Kg)"),
     (77, "#3", "🌾 Setor K: Mercearia (Grãos)", "Feijão Branco", "--", "Pacote 0,5 Kg", 1.0, "Pacote (0,5Kg)"),
-    (78, "#4", "🌾 Setor K: Mercearia (Grãos)", "Feijão preto", "Tio João", "Máximo (Pacote 0,5 Kg)", 1.0, "Pacote (0,5Kg)"),
+    (78, "#4", "🌾 Setor K: Mercearia (Grãos)", "Feijão preto", "Tio João", "Máximo", 1.0, "Pacote (1Kg)"),
     (79, "#5", "🌾 Setor K: Mercearia (Grãos)", "Farinha de Mesa Fina Torrada", "Granfino", "Pacote 0,5 Kg", 1.0, "Pacote (0,5Kg)"),
-    (80, "#6", "🌾 Setor K: Mercearia (Grãos)", "Farinha de Trigo (sem fermento)", "D. Benta", "Boa Sorte", 1.0, "Kg"),
+    (80, "#6", "🌾 Setor K: Mercearia (Grãos)", "Farinha de Trigo (sem fermento)", "D. Benta", "Boa Sorte", 1.0, "Pacote (1Kg)"),
     (81, "#7", "🌾 Setor K: Mercearia (Grãos)", "Milharina ou Fubá Mimoso", "Granfino", "Pacote 0,5 Kg", 1.0, "Pacote (0,5Kg)"),
-    (82, "#8", "🌾 Setor K: Mercearia (Grãos)", "Açúcar", "União", "Neve", 3.0, "Kg"),
+    (82, "#8", "🌾 Setor K: Mercearia (Grãos)", "Açúcar", "União", "Neve", 3.0, "Pacote (1Kg)"),
 
     # ➕ SETOR L: EXTRAS (SOMADOS AO MERCADO)
     (83, "#E1", "➕ Setor L: Extras", "Soja clara pequena - PTS", "--", "-", 1.0, "Kg"),
@@ -329,13 +386,13 @@ def obter_aba_config(ano_str=None):
         sheet = executar_com_retry(sp.worksheet, "Configuracoes")
     except gspread.WorksheetNotFound:
         sheet = executar_com_retry(sp.add_worksheet, title="Configuracoes", rows="200", cols="2")
-        mes_atual = agora_br().strftime("%m %Y")
+        mes_atual = "11 2026"
         executar_com_retry(
             sheet.append_rows,
             [
                 ["Chave", "Valor"],
                 ["mes_ano_ativo", mes_atual],
-                ["data_compra_ativa", hoje_br().strftime("%d/%m/%Y")]
+                ["data_compra_ativa", "05/11/2026"]
             ],
             value_input_option="USER_ENTERED"
         )
@@ -372,9 +429,18 @@ def obter_aba_catalogo(ano_str=None):
         vals = executar_com_retry(sheet.get_values)
         if len(vals) <= 1:
             raise gspread.WorksheetNotFound("Catálogo vazio")
-        # Migração automática para v.1.3 (atualiza unidades por extenso, Leite Soja e Saco de Lixo 50L/100L preservando preços)
+        # Migração automática para v.1.5 (atualiza unidades Pacote (5Kg) do Arroz e Pacote (1Kg) de Feijão Preto, Trigo e Açúcar)
         codigos_atuais = {str(r[1]).strip() for r in vals[1:] if len(r) > 1}
-        if "#22A" not in codigos_atuais or any(len(r) > 7 and r[7] in ["Un", "Lt", "Pct", "Cx", "Sc", "Sq", "Vd", "Tb", "Rol"] for r in vals[1:]):
+        mapa_unid_atuais = {str(r[1]).strip(): (r[7] if len(r) > 7 else "") for r in vals[1:] if len(r) > 1}
+        precisa_migrar_v15 = (
+            "#22A" not in codigos_atuais
+            or mapa_unid_atuais.get("#1") != "Pacote (5Kg)"
+            or mapa_unid_atuais.get("#4") != "Pacote (1Kg)"
+            or mapa_unid_atuais.get("#6") != "Pacote (1Kg)"
+            or mapa_unid_atuais.get("#8") != "Pacote (1Kg)"
+            or any(len(r) > 7 and r[7] in ["Un", "Lt", "Pct", "Cx", "Sc", "Sq", "Vd", "Tb", "Rol"] for r in vals[1:])
+        )
+        if precisa_migrar_v15:
             precos_antigos = {str(r[1]).strip(): (r[8] if len(r) > 8 else "0,00") for r in vals[1:] if len(r) > 1}
             if "#22" in precos_antigos and "#22A" not in precos_antigos:
                 precos_antigos["#22A"] = precos_antigos["#22"]
@@ -495,7 +561,7 @@ def ler_dados_aba_mes_cached(mes_ano_str, ano_str=None):
         if c not in df.columns:
             df[c] = ""
 
-    # Sincroniza nomes/unidades/ordem do Catálogo v.1.3 e remove o antigo #22 unificado se #22A/#22B entrarem
+    # Sincroniza nomes/unidades/ordem do Catálogo v.1.5 e ajusta Arroz (5Kg -> 1 Pacote de 5Kg)
     df_cat = carregar_df_catalogo(ano_str)
     if "#22" in df["Codigo"].astype(str).str.strip().values:
         df = df[df["Codigo"].astype(str).str.strip() != "#22"].copy()
@@ -506,6 +572,11 @@ def ler_dados_aba_mes_cached(mes_ano_str, ano_str=None):
         c_m = str(rm["Codigo"]).strip()
         if c_m in mapa_cat_meta:
             rc_ref = mapa_cat_meta[c_m]
+            # Se o Arroz (#1) estava com unidade antiga "Kg" e Qtd 5, migra para 1 Pacote (5Kg)
+            if c_m == "#1" and str(rm["Unidade"]) == "Kg" and safe_float(rm["QtdPlanejada"]) == 5.0:
+                df.at[idx_m, "QtdPlanejada"] = "1"
+                df.at[idx_m, "QtdComprada"] = "1"
+                precisa_salvar_migracao = True
             if (str(rm["Produto"]) != str(rc_ref["Produto"]) or
                 str(rm["Unidade"]) != str(rc_ref["Unidade"]) or
                 str(rm["Marca1"]) != str(rc_ref["Marca1"]) or
@@ -747,7 +818,7 @@ def calcular_totais_df(df_mes):
 
 # === CARREGAMENTO INICIAL DE CONFIGURAÇÃO DO MÊS ATIVO ===
 ano_corrente = agora_br().strftime("%Y")
-mes_corrente = agora_br().strftime("%m %Y")
+mes_padrao_inicial = "11 2026"
 
 try:
     config_dict = carregar_config_dict(ano_corrente)
@@ -755,10 +826,27 @@ except Exception as e:
     st.error(f"⚠️ Não foi possível conectar à planilha 'Compras {ano_corrente}'. Verifique se o e-mail do robô foi compartilhado na pasta 'mercado' e se o Secrets está configurado. Detalhe: {e}")
     st.stop()
 
-mes_ano_ativo = config_dict.get("mes_ano_ativo", mes_corrente)
+mes_ano_ativo = config_dict.get("mes_ano_ativo", mes_padrao_inicial)
 if not mes_ano_ativo or " " not in mes_ano_ativo:
-    mes_ano_ativo = mes_corrente
+    mes_ano_ativo = mes_padrao_inicial
+# Se estava no mês 10 2026 sem compras fechadas e nunca migrou para 11 2026, aplica 11 2026 uma única vez
+if mes_ano_ativo == "10 2026" and config_dict.get("migrado_11_2026") != "TRUE":
+    mes_ano_ativo = "11 2026"
+    salvar_configs({"mes_ano_ativo": "11 2026", "migrado_11_2026": "TRUE"}, "2026")
+
 ano_ativo = mes_ano_ativo.split(" ")[-1]
+
+# Lista de meses disponíveis (começando em 11 2026, mantendo 10 2026 ao final caso queira consultar)
+opcoes_meses = []
+for a in range(2026, 2031):
+    for m in range(1, 13):
+        if a == 2026 and m < 11:
+            continue
+        opcoes_meses.append(f"{m:02d} {a}")
+if "10 2026" not in opcoes_meses:
+    opcoes_meses.append("10 2026")
+if mes_ano_ativo not in opcoes_meses:
+    opcoes_meses.insert(0, mes_ano_ativo)
 
 # === MENU LATERAL COM RECOLHIMENTO AUTOMÁTICO (PADRÃO LUZ & ÁGUA) ===
 if "recolher_menu" not in st.session_state:
@@ -772,21 +860,14 @@ def acionar_fechamento_menu():
 
 st.sidebar.markdown("### 🛒Compras")
 
-# Seletor rápido de Mês/Ano no topo da barra lateral
-opcoes_meses = []
-for a in range(2026, 2031):
-    for m in range(1, 13):
-        opcoes_meses.append(f"{m:02d} {a}")
-if mes_ano_ativo not in opcoes_meses:
-    opcoes_meses.insert(0, mes_ano_ativo)
-
-novo_mes_sel = st.sidebar.selectbox(
+novo_mes_sel_side = st.sidebar.selectbox(
     "📅 Mês/Ano Ativo:",
     opcoes_meses,
-    index=opcoes_meses.index(mes_ano_ativo)
+    index=opcoes_meses.index(mes_ano_ativo),
+    key="sel_mes_sidebar"
 )
-if novo_mes_sel != mes_ano_ativo:
-    salvar_configs({"mes_ano_ativo": novo_mes_sel}, novo_mes_sel.split(" ")[-1])
+if novo_mes_sel_side != mes_ano_ativo:
+    salvar_configs({"mes_ano_ativo": novo_mes_sel_side}, novo_mes_sel_side.split(" ")[-1])
     st.rerun()
 
 menu = st.sidebar.radio(
@@ -844,11 +925,55 @@ df_mes, sheet_mes = carregar_df_mes(mes_ano_ativo, ano_ativo)
 totais_atuais = calcular_totais_df(df_mes)
 resumo_salvo = obter_resumo_mes(mes_ano_ativo, ano_ativo)
 
+# Data padrão da compra do mês ativo (sempre Dia 05 do mês selecionado, salvo se já alterada pelo usuário)
+data_compra_padrao_mes = data_padrao_dia_5(mes_ano_ativo)
+if resumo_salvo.get("DataCompra"):
+    try:
+        dt_salva = datetime.strptime(str(resumo_salvo["DataCompra"]).strip(), "%d/%m/%Y").date()
+        if dt_salva.strftime("%m %Y") == mes_ano_ativo:
+            data_compra_padrao_mes = dt_salva
+    except Exception:
+        pass
+elif config_dict.get(f"data_compra_{mes_ano_ativo}"):
+    try:
+        data_compra_padrao_mes = datetime.strptime(config_dict[f"data_compra_{mes_ano_ativo}"], "%d/%m/%Y").date()
+    except Exception:
+        pass
+
 # ==============================================================================
-# GUIA 1: PLANEJAMENTO (CASA - PRÉ-COMPRA COM SELETOR AZUL)
+# GUIA 1: PLANEJAMENTO (CASA - PRÉ-COMPRA)
 # ==============================================================================
 if menu == "Planejamento (Casa)":
-    st.markdown('<h2 style="margin-bottom: 0px;">📝 Planejamento (Pré-Compra)</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 style="text-align: center; margin-bottom: 10px;">📝 Planejamento (Pré-Compra)</h2>', unsafe_allow_html=True)
+
+    # Cabeçalho centralizado exatamente como no esboço: Mês/Ano Ativo + Data Real da Compra (padrão dia 05)
+    _, col_hdr_mes, col_hdr_dt, _ = st.columns([0.6, 1.4, 1.4, 0.6])
+    with col_hdr_mes:
+        mes_topo_sel = st.selectbox(
+            "📅 Mês/Ano Ativo:",
+            opcoes_meses,
+            index=opcoes_meses.index(mes_ano_ativo),
+            key="sel_mes_topo_plan"
+        )
+        if mes_topo_sel != mes_ano_ativo:
+            salvar_configs({"mes_ano_ativo": mes_topo_sel}, mes_topo_sel.split(" ")[-1])
+            st.rerun()
+    with col_hdr_dt:
+        dt_topo_plan = st.date_input(
+            "Data Real da Compra",
+            value=data_compra_padrao_mes,
+            format="DD/MM/YYYY",
+            key=f"dt_topo_plan_{mes_ano_ativo}"
+        )
+        dt_topo_str = dt_topo_plan.strftime("%d/%m/%Y")
+        if dt_topo_str != data_compra_padrao_mes.strftime("%d/%m/%Y"):
+            salvar_configs({f"data_compra_{mes_ano_ativo}": dt_topo_str}, ano_ativo)
+            if resumo_salvo:
+                resumo_salvo["DataCompra"] = dt_topo_str
+                salvar_resumo_pagamento(mes_ano_ativo, resumo_salvo, ano_ativo)
+            st.rerun()
+
+    st.markdown('<hr class="divisor-secao">', unsafe_allow_html=True)
 
     if "msg_sucesso_plan" in st.session_state:
         st.success(st.session_state.pop("msg_sucesso_plan"))
@@ -867,14 +992,26 @@ if menu == "Planejamento (Casa)":
         st.markdown(f"""
         <div class="card-azul">
             <b>🛒 Mercado (+ Extras)</b><br>
-            Itens marcados (🔵): <b>{totais_atuais['itens_plan_merc']}</b><br>
+            Itens marcados (🟢): <b>{totais_atuais['itens_plan_merc']}</b><br>
             Previsto Mercado: <b>{formatar_moeda_br(totais_atuais['merc_plan'])}</b>
         </div>
         """, unsafe_allow_html=True)
 
-    # Filtro opcional de setor para facilitar a revisão com a esposa
-    opcoes_filtro_setor = ["📋 Todos os Setores (Circuito Completo)"] + SETORES_OFICIAIS
-    filtro_setor = st.selectbox("Filtrar por Departamento / Setor:", opcoes_filtro_setor, index=0)
+    st.markdown('<hr class="divisor-secao">', unsafe_allow_html=True)
+
+    # Filtro opcional de setor + controles de expandir/recolher todos os setores
+    col_flt1, col_flt2, col_flt3 = st.columns([2.2, 0.9, 0.9])
+    with col_flt1:
+        opcoes_filtro_setor = ["📋 Todos os Setores (Circuito Completo)"] + SETORES_OFICIAIS
+        filtro_setor = st.selectbox("Filtrar por Departamento / Setor:", opcoes_filtro_setor, index=0)
+    with col_flt2:
+        st.write("")
+        if st.button("📂 Abrir Setores", use_container_width=True):
+            st.session_state["exp_plan_todos"] = True
+    with col_flt3:
+        st.write("")
+        if st.button("📁 Encolher Todos", use_container_width=True):
+            st.session_state["exp_plan_todos"] = False
 
     with st.expander("➕ Adicionar Item Avulso Rápido para este Mês"):
         with st.form("form_item_avulso_mes", clear_on_submit=True):
@@ -887,30 +1024,47 @@ if menu == "Planejamento (Casa)":
                 av_qtd = st.number_input("Quantidade", min_value=0.1, value=1.0, step=0.5, format="%.2f")
                 av_unid = st.text_input("Unidade (Unidade, Kg, Pacote, Caixa, Litro...)", value="Unidade")
                 av_preco = st.number_input("Preço Unit. Estimado (R$)", min_value=0.0, value=0.0, step=0.5, format="%.2f")
-            if st.form_submit_button("Inserir Item Avulso já Marcado (🔵)", use_container_width=True):
+            if st.form_submit_button("Inserir Item Avulso já Marcado para Compra", use_container_width=True):
                 if av_prod.strip():
-                    nova_ordem = int(df_mes["Ordem_num"].max() + 1) if not df_mes.empty else 85
-                    novo_cod = f"#AV{nova_ordem}"
+                    # Insere logo após o último item do próprio setor escolhido
+                    df_set_av = df_mes[df_mes["Setor"] == av_setor]
+                    nova_ordem = int(df_set_av["Ordem_num"].max() + 1) if not df_set_av.empty else int(df_mes["Ordem_num"].max() + 1)
+                    novo_cod = f"#AV{int(time.time()) % 10000}"
                     sub_av = arredondar_moeda(av_qtd * av_preco, 2)
-                    executar_com_retry(
-                        sheet_mes.append_row,
-                        [
-                            str(nova_ordem), novo_cod, av_setor, av_prod.strip(),
-                            av_m1.strip() or "--", "Avulso do Mês", av_unid.strip() or "Unidade",
-                            "TRUE", formatar_num_planilha(av_qtd, 3), formatar_num_planilha(av_preco, 2),
-                            formatar_num_planilha(sub_av, 2),
-                            "FALSE", formatar_num_planilha(av_qtd, 3), formatar_num_planilha(av_preco, 2),
-                            "0,00", "Item avulso"
-                        ],
-                        value_input_option="USER_ENTERED"
-                    )
-                    limpar_cache_dados()
-                    st.session_state["msg_sucesso_plan"] = f"✅ Item avulso '{av_prod}' adicionado e marcado para compra!"
+                    nova_linha_av = pd.DataFrame([{
+                        "Ordem": str(nova_ordem),
+                        "Codigo": novo_cod,
+                        "Setor": av_setor,
+                        "Produto": av_prod.strip(),
+                        "Marca1": av_m1.strip() or "--",
+                        "Marca2": "Avulso do Mês",
+                        "Unidade": av_unid.strip() or "Unidade",
+                        "Planejado": "TRUE",
+                        "QtdPlanejada": formatar_num_planilha(av_qtd, 3),
+                        "PrecoUnit": formatar_num_planilha(av_preco, 2),
+                        "SubtotalPlanejado": formatar_num_planilha(sub_av, 2),
+                        "Comprado": "FALSE",
+                        "QtdComprada": formatar_num_planilha(av_qtd, 3),
+                        "PrecoRealUnit": formatar_num_planilha(av_preco, 2),
+                        "SubtotalReal": "0,00",
+                        "ObsMes": "Item avulso",
+                        "Ordem_num": nova_ordem,
+                        "Planejado_bool": True,
+                        "Comprado_bool": False,
+                        "QtdPlanejada_num": float(av_qtd),
+                        "PrecoUnit_num": float(av_preco),
+                        "QtdComprada_num": float(av_qtd),
+                        "PrecoRealUnit_num": float(av_preco)
+                    }])
+                    df_mes_novo = pd.concat([df_mes, nova_linha_av], ignore_index=True)
+                    salvar_df_mes(sheet_mes, df_mes_novo, ano_ativo, atualizar_preco_catalogo=False)
+                    st.session_state["msg_sucesso_plan"] = f"✅ Item avulso '{av_prod}' adicionado em '{av_setor}' e já marcado como Planejado (aparecerá na Conferência)!"
                     st.rerun()
 
-    st.info("💡 **Como usar em casa:** Marque o seletor **🔵 Comprar** nos itens que faltam na despensa e ajuste a **Qtd** ao lado se já tiver alguma unidade em casa. Ao final, clique em **Salvar Planejamento**.")
+    st.caption("💡 **Dica:** Você pode clicar no título de qualquer **Setor** abaixo para **encolher (recolher)** os setores que você já revisou, sem perder nenhuma marcação!")
 
     setores_exibir = SETORES_OFICIAIS if filtro_setor.startswith("📋") else [filtro_setor]
+    expandir_padrao_plan = st.session_state.get("exp_plan_todos", True)
 
     with st.form("form_planejamento_casa", clear_on_submit=False):
         valores_plan = {}
@@ -918,55 +1072,60 @@ if menu == "Planejamento (Casa)":
             df_setor = df_mes[df_mes["Setor"] == setor_nome]
             if df_setor.empty:
                 continue
-            st.markdown(f'<div class="setor-header">{setor_nome}</div>', unsafe_allow_html=True)
 
-            for idx_row, row in df_setor.iterrows():
-                cod = str(row["Codigo"])
-                prod = str(row["Produto"])
-                m1 = exibir_marca_limpa(row["Marca1"])
-                m2 = str(row["Marca2"] or "").strip()
-                m2_txt = f" | 2ª Opção/Obs: <b>{m2}</b>" if m2 not in ["", "-", "--", "nan"] else ""
-                unid = str(row["Unidade"])
-                plan_atual = bool(row["Planejado_bool"])
-                qtd_atual = float(row["QtdPlanejada_num"]) if row["QtdPlanejada_num"] > 0 else 1.0
-                pr_atual = float(row["PrecoUnit_num"])
+            qtd_marcados_setor = int(df_setor["Planejado_bool"].sum())
+            total_itens_setor = len(df_setor)
+            titulo_exp = f"{setor_nome}  —  ({qtd_marcados_setor}/{total_itens_setor} marcados)"
 
-                st.markdown(
-                    f"**{prod}** <span class='item-sub'>— Marca: <b>{m1}</b>{m2_txt} | Unid: <b>{unid}</b></span>",
-                    unsafe_allow_html=True
-                )
-                c1, c2, c3 = st.columns([1.4, 1.1, 1.2])
-                with c1:
-                    escolha_az = st.radio(
-                        f"Marcar {cod}",
-                        options=["— Não", "🔵 Comprar"],
-                        index=1 if plan_atual else 0,
-                        horizontal=True,
-                        label_visibility="collapsed",
-                        key=f"pl_rad_{mes_ano_ativo}_{idx_row}"
-                    )
-                with c2:
-                    nova_qtd = st.number_input(
-                        f"Qtd ({unid})",
-                        min_value=0.0,
-                        value=qtd_atual,
-                        step=0.5 if unid == "Kg" else 1.0,
-                        format="%.2f",
-                        key=f"pl_qtd_{mes_ano_ativo}_{idx_row}"
-                    )
-                with c3:
-                    novo_pr = st.number_input(
-                        "Preço Unit. (R$)",
-                        min_value=0.0,
-                        value=pr_atual,
-                        step=0.50,
-                        format="%.2f",
-                        key=f"pl_pr_{mes_ano_ativo}_{idx_row}"
-                    )
-                valores_plan[idx_row] = (escolha_az == "🔵 Comprar", nova_qtd, novo_pr)
-                st.markdown('<hr style="margin: 6px 0px; opacity: 0.2;">', unsafe_allow_html=True)
+            with st.expander(titulo_exp, expanded=expandir_padrao_plan):
+                for idx_row, row in df_setor.iterrows():
+                    cod = str(row["Codigo"])
+                    prod = str(row["Produto"])
+                    m1 = exibir_marca_limpa(row["Marca1"])
+                    m2 = str(row["Marca2"] or "").strip()
+                    m2_txt = f" | 2ª Opção/Obs: <b>{m2}</b>" if m2 not in ["", "-", "--", "nan"] else ""
+                    unid = str(row["Unidade"])
+                    plan_atual = bool(row["Planejado_bool"])
+                    qtd_atual = float(row["QtdPlanejada_num"]) if row["QtdPlanejada_num"] > 0 else 1.0
+                    pr_atual = float(row["PrecoUnit_num"])
 
-        st.markdown("### 💳 Planejamento de Pagamento para o Caixa (Mercado)")
+                    st.markdown(
+                        f"**{prod}** <span class='item-sub'>— Marca: <b>{m1}</b>{m2_txt} | Unid: <b>{unid}</b></span>",
+                        unsafe_allow_html=True
+                    )
+                    c1, c2, c3 = st.columns([1.4, 1.1, 1.2])
+                    with c1:
+                        escolha_az = st.radio(
+                            f"Marcar {cod}",
+                            options=["— Não", "Comprar"],
+                            index=1 if plan_atual else 0,
+                            horizontal=True,
+                            label_visibility="collapsed",
+                            key=f"pl_rad_{mes_ano_ativo}_{idx_row}"
+                        )
+                    with c2:
+                        nova_qtd = st.number_input(
+                            f"({unid})",
+                            min_value=0.0,
+                            value=qtd_atual,
+                            step=0.5 if unid == "Kg" else 1.0,
+                            format="%.2f",
+                            key=f"pl_qtd_{mes_ano_ativo}_{idx_row}"
+                        )
+                    with c3:
+                        novo_pr = st.number_input(
+                            "Preço Unit. (R$)",
+                            min_value=0.0,
+                            value=pr_atual,
+                            step=0.50,
+                            format="%.2f",
+                            key=f"pl_pr_{mes_ano_ativo}_{idx_row}"
+                        )
+                    valores_plan[idx_row] = (escolha_az == "Comprar", nova_qtd, novo_pr)
+                    st.markdown('<hr style="margin: 6px 0px; opacity: 0.2;">', unsafe_allow_html=True)
+
+        st.markdown('<hr class="divisor-secao">', unsafe_allow_html=True)
+        st.markdown("### 💵 Planejamento de Pagamento para o Caixa (Mercado)")
         st.caption("Lembrete: pagar **1º em Dinheiro** no caixa e dividir o restante entre Débito ou Crédito (Bradesco, Mercado Pago ou Nubank):")
 
         din_prev = st.number_input(
@@ -978,13 +1137,24 @@ if menu == "Planejamento (Casa)":
         )
         col_b1, col_b2 = st.columns(2)
         with col_b1:
-            brad_deb = st.number_input("💳 Bradesco — DÉBITO (R$)", min_value=0.0, value=safe_float(resumo_salvo.get("BradescoDebito", 0.0)), step=10.0, format="%.2f")
-            mp_deb = st.number_input("💳 Mercado Pago — DÉBITO (R$)", min_value=0.0, value=safe_float(resumo_salvo.get("MercadoPagoDebito", 0.0)), step=10.0, format="%.2f")
-            nu_deb = st.number_input("💳 Nubank — DÉBITO (R$)", min_value=0.0, value=safe_float(resumo_salvo.get("NubankDebito", 0.0)), step=10.0, format="%.2f")
+            st.markdown(label_banco_html(LOGO_BRADESCO, "Bradesco", "DÉBITO"), unsafe_allow_html=True)
+            brad_deb = st.number_input("Bradesco Débito", min_value=0.0, value=safe_float(resumo_salvo.get("BradescoDebito", 0.0)), step=10.0, format="%.2f", label_visibility="collapsed", key="pl_bd")
+
+            st.markdown(label_banco_html(LOGO_MERCADOPAGO, "Mercado Pago", "DÉBITO"), unsafe_allow_html=True)
+            mp_deb = st.number_input("Mercado Pago Débito", min_value=0.0, value=safe_float(resumo_salvo.get("MercadoPagoDebito", 0.0)), step=10.0, format="%.2f", label_visibility="collapsed", key="pl_md")
+
+            st.markdown(label_banco_html(LOGO_NUBANK, "Nubank", "DÉBITO"), unsafe_allow_html=True)
+            nu_deb = st.number_input("Nubank Débito", min_value=0.0, value=safe_float(resumo_salvo.get("NubankDebito", 0.0)), step=10.0, format="%.2f", label_visibility="collapsed", key="pl_nd")
+
         with col_b2:
-            brad_cred = st.number_input("💳 Bradesco — CRÉDITO (R$)", min_value=0.0, value=safe_float(resumo_salvo.get("BradescoCredito", 0.0)), step=10.0, format="%.2f")
-            mp_cred = st.number_input("💳 Mercado Pago — CRÉDITO (R$)", min_value=0.0, value=safe_float(resumo_salvo.get("MercadoPagoCredito", 0.0)), step=10.0, format="%.2f")
-            nu_cred = st.number_input("💳 Nubank — CRÉDITO (R$)", min_value=0.0, value=safe_float(resumo_salvo.get("NubankCredito", 0.0)), step=10.0, format="%.2f")
+            st.markdown(label_banco_html(LOGO_BRADESCO, "Bradesco", "CRÉDITO"), unsafe_allow_html=True)
+            brad_cred = st.number_input("Bradesco Crédito", min_value=0.0, value=safe_float(resumo_salvo.get("BradescoCredito", 0.0)), step=10.0, format="%.2f", label_visibility="collapsed", key="pl_bc")
+
+            st.markdown(label_banco_html(LOGO_MERCADOPAGO, "Mercado Pago", "CRÉDITO"), unsafe_allow_html=True)
+            mp_cred = st.number_input("Mercado Pago Crédito", min_value=0.0, value=safe_float(resumo_salvo.get("MercadoPagoCredito", 0.0)), step=10.0, format="%.2f", label_visibility="collapsed", key="pl_mc")
+
+            st.markdown(label_banco_html(LOGO_NUBANK, "Nubank", "CRÉDITO"), unsafe_allow_html=True)
+            nu_cred = st.number_input("Nubank Crédito", min_value=0.0, value=safe_float(resumo_salvo.get("NubankCredito", 0.0)), step=10.0, format="%.2f", label_visibility="collapsed", key="pl_nc")
 
         pag_farm_str = st.selectbox(
             "💊 Forma de Pagamento na Farmácia (Antes do Mercado):",
@@ -992,7 +1162,7 @@ if menu == "Planejamento (Casa)":
             index=0
         )
 
-        btn_salvar_plan = st.form_submit_button("💾 Salvar Planejamento do Mês (🔵)", use_container_width=True)
+        btn_salvar_plan = st.form_submit_button("💾 Salvar Planejamento do Mês", use_container_width=True)
 
     if btn_salvar_plan:
         for idx_r, (b_plan, q_pl, p_pl) in valores_plan.items():
@@ -1007,7 +1177,7 @@ if menu == "Planejamento (Casa)":
         salvar_df_mes(sheet_mes, df_mes, ano_ativo, atualizar_preco_catalogo=True)
         novos_tot = calcular_totais_df(df_mes)
         salvar_resumo_pagamento(mes_ano_ativo, {
-            "DataCompra": resumo_salvo.get("DataCompra") or hoje_br().strftime("%d/%m/%Y"),
+            "DataCompra": dt_topo_plan.strftime("%d/%m/%Y"),
             "TotalMercadoPlanejado": novos_tot["merc_plan"],
             "TotalMercadoReal": novos_tot["merc_real"],
             "TotalFarmaciaPlanejado": novos_tot["farm_plan"],
@@ -1039,7 +1209,7 @@ if menu == "Planejamento (Casa)":
 # GUIA 2: CONFERÊNCIA (NO MERCADO / RETORNO - COM TICK VERDE)
 # ==============================================================================
 elif menu == "Conferência (Mercado)":
-    st.markdown('<h2 style="margin-bottom: 0px;">✅ Conferência (Mercado / Retorno)</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 style="text-align: center; margin-bottom: 10px;">✅ Conferência (Mercado / Retorno)</h2>', unsafe_allow_html=True)
 
     if "msg_sucesso_conf" in st.session_state:
         st.success(st.session_state.pop("msg_sucesso_conf"))
@@ -1062,13 +1232,72 @@ elif menu == "Conferência (Mercado)":
         </div>
         """, unsafe_allow_html=True)
 
-    col_f1, col_f2 = st.columns([1.3, 1.7])
+    st.markdown('<hr class="divisor-secao">', unsafe_allow_html=True)
+
+    col_f1, col_f2, col_f3, col_f4 = st.columns([1.3, 1.5, 0.6, 0.6])
     with col_f1:
-        apenas_planejados = st.checkbox("Mostrar só itens planejados (🔵)", value=True)
+        apenas_planejados = st.checkbox("Mostrar só itens planejados", value=True)
     with col_f2:
         setor_conf_sel = st.selectbox("Ir direto ao Setor:", ["📋 Circuito Completo (A → L)"] + SETORES_OFICIAIS, index=0)
+    with col_f3:
+        st.write("")
+        if st.button("📂 Abrir", use_container_width=True, help="Expandir todos os setores"):
+            st.session_state["exp_conf_todos"] = True
+    with col_f4:
+        st.write("")
+        if st.button("📁 Fechar", use_container_width=True, help="Recolher todos os setores"):
+            st.session_state["exp_conf_todos"] = False
+
+    # Também permite adicionar item avulso de última hora direto na Conferência (no meio do mercado)
+    with st.expander("➕ Adicionar Item Avulso Rápido no Carrinho"):
+        with st.form("form_item_avulso_conf", clear_on_submit=True):
+            ca1, ca2 = st.columns(2)
+            with ca1:
+                avc_prod = st.text_input("Nome do Produto")
+                avc_setor = st.selectbox("Setor", SETORES_OFICIAIS, index=len(SETORES_OFICIAIS)-1)
+                avc_m1 = st.text_input("Marca", value="--")
+            with ca2:
+                avc_qtd = st.number_input("Quantidade", min_value=0.1, value=1.0, step=0.5, format="%.2f")
+                avc_unid = st.text_input("Unidade", value="Unidade")
+                avc_preco = st.number_input("Preço Unit. (R$)", min_value=0.0, value=0.0, step=0.5, format="%.2f")
+            if st.form_submit_button("Inserir já como Planejado e Comprado (✅)", use_container_width=True):
+                if avc_prod.strip():
+                    df_set_av = df_mes[df_mes["Setor"] == avc_setor]
+                    nova_ordem = int(df_set_av["Ordem_num"].max() + 1) if not df_set_av.empty else int(df_mes["Ordem_num"].max() + 1)
+                    novo_cod = f"#AV{int(time.time()) % 10000}"
+                    sub_av = arredondar_moeda(avc_qtd * avc_preco, 2)
+                    nova_linha_av = pd.DataFrame([{
+                        "Ordem": str(nova_ordem),
+                        "Codigo": novo_cod,
+                        "Setor": avc_setor,
+                        "Produto": avc_prod.strip(),
+                        "Marca1": avc_m1.strip() or "--",
+                        "Marca2": "Avulso do Mês",
+                        "Unidade": avc_unid.strip() or "Unidade",
+                        "Planejado": "TRUE",
+                        "QtdPlanejada": formatar_num_planilha(avc_qtd, 3),
+                        "PrecoUnit": formatar_num_planilha(avc_preco, 2),
+                        "SubtotalPlanejado": formatar_num_planilha(sub_av, 2),
+                        "Comprado": "TRUE",
+                        "QtdComprada": formatar_num_planilha(avc_qtd, 3),
+                        "PrecoRealUnit": formatar_num_planilha(avc_preco, 2),
+                        "SubtotalReal": formatar_num_planilha(sub_av, 2),
+                        "ObsMes": "Avulso no mercado",
+                        "Ordem_num": nova_ordem,
+                        "Planejado_bool": True,
+                        "Comprado_bool": True,
+                        "QtdPlanejada_num": float(avc_qtd),
+                        "PrecoUnit_num": float(avc_preco),
+                        "QtdComprada_num": float(avc_qtd),
+                        "PrecoRealUnit_num": float(avc_preco)
+                    }])
+                    df_mes_novo = pd.concat([df_mes, nova_linha_av], ignore_index=True)
+                    salvar_df_mes(sheet_mes, df_mes_novo, ano_ativo, atualizar_preco_catalogo=False)
+                    st.session_state["msg_sucesso_conf"] = f"✅ Item '{avc_prod}' incluído no carrinho!"
+                    st.rerun()
 
     setores_conf = SETORES_OFICIAIS if setor_conf_sel.startswith("📋") else [setor_conf_sel]
+    expandir_padrao_conf = st.session_state.get("exp_conf_todos", True)
 
     with st.form("form_conferencia_mercado", clear_on_submit=False):
         valores_conf = {}
@@ -1082,85 +1311,123 @@ elif menu == "Conferência (Mercado)":
                 continue
 
             algum_item_exibido = True
-            st.markdown(f'<div class="setor-header">{setor_nome}</div>', unsafe_allow_html=True)
+            eh_setor_farmacia = "Farmácia" in setor_nome
+            qtd_comp_set = int(df_setor["Comprado_bool"].sum())
+            tot_set = len(df_setor)
+            status_setor = "✅ Concluído" if (tot_set > 0 and qtd_comp_set == tot_set) else f"{qtd_comp_set}/{tot_set} no carrinho"
 
-            for idx_row, row in df_setor.iterrows():
-                cod = str(row["Codigo"])
-                prod = str(row["Produto"])
-                m1 = exibir_marca_limpa(row["Marca1"])
-                m2 = str(row["Marca2"] or "").strip()
-                m2_txt = f" | {m2}" if m2 not in ["", "-", "--", "nan"] else ""
-                unid = str(row["Unidade"])
-                comp_atual = bool(row["Comprado_bool"])
-                qtd_c_atual = float(row["QtdComprada_num"]) if row["QtdComprada_num"] > 0 else float(row["QtdPlanejada_num"])
-                pr_c_atual = float(row["PrecoRealUnit_num"]) if row["PrecoRealUnit_num"] > 0 else float(row["PrecoUnit_num"])
-                obs_atual = str(row.get("ObsMes", "") or "")
+            with st.expander(f"{setor_nome}  —  ({status_setor})", expanded=expandir_padrao_conf):
+                for idx_row, row in df_setor.iterrows():
+                    cod = str(row["Codigo"])
+                    prod = str(row["Produto"])
+                    m1 = exibir_marca_limpa(row["Marca1"])
+                    m2 = str(row["Marca2"] or "").strip()
+                    m2_txt = f" | {m2}" if m2 not in ["", "-", "--", "nan"] else ""
+                    unid = str(row["Unidade"])
+                    comp_atual = bool(row["Comprado_bool"])
+                    qtd_c_atual = float(row["QtdComprada_num"]) if row["QtdComprada_num"] > 0 else float(row["QtdPlanejada_num"])
+                    pr_c_atual = float(row["PrecoRealUnit_num"]) if row["PrecoRealUnit_num"] > 0 else float(row["PrecoUnit_num"])
+                    obs_atual = str(row.get("ObsMes", "") or "")
 
-                badge_plan = "🔵 Planejado" if row["Planejado_bool"] else "⚪ Extra não planejado"
-                st.markdown(
-                    f"**{prod}** <span class='item-sub'>({badge_plan}) — Marca: <b>{m1}{m2_txt}</b> | Planejado: <b>{formatar_qtd_br(row['QtdPlanejada_num'])} {unid}</b></span>",
-                    unsafe_allow_html=True
-                )
-
-                cc1, cc2, cc3, cc4 = st.columns([1.1, 1.0, 1.1, 1.3])
-                with cc1:
-                    chk_verde = st.checkbox(
-                        "✅ Comprado",
-                        value=comp_atual,
-                        key=f"cf_chk_{mes_ano_ativo}_{idx_row}"
-                    )
-                with cc2:
-                    qtd_real = st.number_input(
-                        f"Qtd/Peso ({unid})",
-                        min_value=0.0,
-                        value=qtd_c_atual,
-                        step=0.1 if unid == "Kg" else 1.0,
-                        format="%.2f",
-                        key=f"cf_qtd_{mes_ano_ativo}_{idx_row}"
-                    )
-                with cc3:
-                    pr_real = st.number_input(
-                        "Preço Unit. (R$)",
-                        min_value=0.0,
-                        value=pr_c_atual,
-                        step=0.50,
-                        format="%.2f",
-                        key=f"cf_pr_{mes_ano_ativo}_{idx_row}"
-                    )
-                with cc4:
-                    obs_in = st.text_input(
-                        "Obs (Kit/Pote/Peso)",
-                        value=obs_atual,
-                        placeholder="Ex: Kit / Pote",
-                        key=f"cf_obs_{mes_ano_ativo}_{idx_row}"
+                    badge_plan = "🟢 Planejado" if row["Planejado_bool"] else "⚪ Extra"
+                    st.markdown(
+                        f"**{prod}** <span class='item-sub'>({badge_plan}) — Marca: <b>{m1}{m2_txt}</b> | Planejado: <b>{formatar_qtd_br(row['QtdPlanejada_num'])} {unid}</b></span>",
+                        unsafe_allow_html=True
                     )
 
-                valores_conf[idx_row] = (chk_verde, qtd_real, pr_real, obs_in)
-                st.markdown('<hr style="margin: 6px 0px; opacity: 0.2;">', unsafe_allow_html=True)
+                    # Na Farmácia não exibe o campo "Obs (Kit/Pote/Peso)"
+                    if eh_setor_farmacia:
+                        cc1, cc2, cc3 = st.columns([1.2, 1.1, 1.2])
+                        with cc1:
+                            chk_verde = st.checkbox(
+                                "Comprado",
+                                value=comp_atual,
+                                key=f"cf_chk_{mes_ano_ativo}_{idx_row}"
+                            )
+                        with cc2:
+                            qtd_real = st.number_input(
+                                f"({unid})",
+                                min_value=0.0,
+                                value=qtd_c_atual,
+                                step=1.0,
+                                format="%.2f",
+                                key=f"cf_qtd_{mes_ano_ativo}_{idx_row}"
+                            )
+                        with cc3:
+                            pr_real = st.number_input(
+                                "Preço Unit. (R$)",
+                                min_value=0.0,
+                                value=pr_c_atual,
+                                step=0.50,
+                                format="%.2f",
+                                key=f"cf_pr_{mes_ano_ativo}_{idx_row}"
+                            )
+                        obs_in = obs_atual
+                    else:
+                        cc1, cc2, cc3, cc4 = st.columns([1.1, 1.0, 1.1, 1.3])
+                        with cc1:
+                            chk_verde = st.checkbox(
+                                "Comprado",
+                                value=comp_atual,
+                                key=f"cf_chk_{mes_ano_ativo}_{idx_row}"
+                            )
+                        with cc2:
+                            qtd_real = st.number_input(
+                                f"({unid})",
+                                min_value=0.0,
+                                value=qtd_c_atual,
+                                step=0.1 if unid == "Kg" else 1.0,
+                                format="%.2f",
+                                key=f"cf_qtd_{mes_ano_ativo}_{idx_row}"
+                            )
+                        with cc3:
+                            pr_real = st.number_input(
+                                "Preço Unit. (R$)",
+                                min_value=0.0,
+                                value=pr_c_atual,
+                                step=0.50,
+                                format="%.2f",
+                                key=f"cf_pr_{mes_ano_ativo}_{idx_row}"
+                            )
+                        with cc4:
+                            obs_in = st.text_input(
+                                "Obs (Kit/Pote/Peso)",
+                                value=obs_atual,
+                                placeholder="Ex: Kit / Pote",
+                                key=f"cf_obs_{mes_ano_ativo}_{idx_row}"
+                            )
+
+                    valores_conf[idx_row] = (chk_verde, qtd_real, pr_real, obs_in)
+                    st.markdown('<hr style="margin: 6px 0px; opacity: 0.2;">', unsafe_allow_html=True)
 
         if not algum_item_exibido:
             st.warning("Nenhum item planejado para este filtro. Desmarque a opção 'Mostrar só itens planejados' acima ou vá na guia Planejamento (Casa).")
 
+        st.markdown('<hr class="divisor-secao">', unsafe_allow_html=True)
         st.markdown("### 🧾 Fechamento do Caixa (Como foi pago)")
-        data_c_padrao = hoje_br()
-        if resumo_salvo.get("DataCompra"):
-            try:
-                data_c_padrao = datetime.strptime(resumo_salvo["DataCompra"], "%d/%m/%Y").date()
-            except Exception:
-                pass
 
-        dt_compra_in = st.date_input("Data Real da Compra", value=data_c_padrao, format="DD/MM/YYYY")
+        dt_compra_in = st.date_input("Data Real da Compra", value=data_compra_padrao_mes, format="DD/MM/YYYY")
         din_real = st.number_input("💵 1º Pago em DINHEIRO (R$)", min_value=0.0, value=safe_float(resumo_salvo.get("Dinheiro", 0.0)), step=10.0, format="%.2f")
 
         cp1, cp2 = st.columns(2)
         with cp1:
-            b_deb_r = st.number_input("💳 Bradesco — DÉBITO (R$)", min_value=0.0, value=safe_float(resumo_salvo.get("BradescoDebito", 0.0)), step=10.0, format="%.2f")
-            m_deb_r = st.number_input("💳 Mercado Pago — DÉBITO (R$)", min_value=0.0, value=safe_float(resumo_salvo.get("MercadoPagoDebito", 0.0)), step=10.0, format="%.2f")
-            n_deb_r = st.number_input("💳 Nubank — DÉBITO (R$)", min_value=0.0, value=safe_float(resumo_salvo.get("NubankDebito", 0.0)), step=10.0, format="%.2f")
+            st.markdown(label_banco_html(LOGO_BRADESCO, "Bradesco", "DÉBITO"), unsafe_allow_html=True)
+            b_deb_r = st.number_input("Bradesco Débito Real", min_value=0.0, value=safe_float(resumo_salvo.get("BradescoDebito", 0.0)), step=10.0, format="%.2f", label_visibility="collapsed", key="cf_bd")
+
+            st.markdown(label_banco_html(LOGO_MERCADOPAGO, "Mercado Pago", "DÉBITO"), unsafe_allow_html=True)
+            m_deb_r = st.number_input("Mercado Pago Débito Real", min_value=0.0, value=safe_float(resumo_salvo.get("MercadoPagoDebito", 0.0)), step=10.0, format="%.2f", label_visibility="collapsed", key="cf_md")
+
+            st.markdown(label_banco_html(LOGO_NUBANK, "Nubank", "DÉBITO"), unsafe_allow_html=True)
+            n_deb_r = st.number_input("Nubank Débito Real", min_value=0.0, value=safe_float(resumo_salvo.get("NubankDebito", 0.0)), step=10.0, format="%.2f", label_visibility="collapsed", key="cf_nd")
         with cp2:
-            b_cred_r = st.number_input("💳 Bradesco — CRÉDITO (R$)", min_value=0.0, value=safe_float(resumo_salvo.get("BradescoCredito", 0.0)), step=10.0, format="%.2f")
-            m_cred_r = st.number_input("💳 Mercado Pago — CRÉDITO (R$)", min_value=0.0, value=safe_float(resumo_salvo.get("MercadoPagoCredito", 0.0)), step=10.0, format="%.2f")
-            n_cred_r = st.number_input("💳 Nubank — CRÉDITO (R$)", min_value=0.0, value=safe_float(resumo_salvo.get("NubankCredito", 0.0)), step=10.0, format="%.2f")
+            st.markdown(label_banco_html(LOGO_BRADESCO, "Bradesco", "CRÉDITO"), unsafe_allow_html=True)
+            b_cred_r = st.number_input("Bradesco Crédito Real", min_value=0.0, value=safe_float(resumo_salvo.get("BradescoCredito", 0.0)), step=10.0, format="%.2f", label_visibility="collapsed", key="cf_bc")
+
+            st.markdown(label_banco_html(LOGO_MERCADOPAGO, "Mercado Pago", "CRÉDITO"), unsafe_allow_html=True)
+            m_cred_r = st.number_input("Mercado Pago Crédito Real", min_value=0.0, value=safe_float(resumo_salvo.get("MercadoPagoCredito", 0.0)), step=10.0, format="%.2f", label_visibility="collapsed", key="cf_mc")
+
+            st.markdown(label_banco_html(LOGO_NUBANK, "Nubank", "CRÉDITO"), unsafe_allow_html=True)
+            n_cred_r = st.number_input("Nubank Crédito Real", min_value=0.0, value=safe_float(resumo_salvo.get("NubankCredito", 0.0)), step=10.0, format="%.2f", label_visibility="collapsed", key="cf_nc")
 
         opcoes_pag_farm = ["Dinheiro", "Bradesco - Débito", "Bradesco - Crédito", "Mercado Pago - Débito", "Mercado Pago - Crédito", "Nubank - Débito", "Nubank - Crédito"]
         idx_pf = opcoes_pag_farm.index(resumo_salvo.get("PagamentoFarmacia")) if resumo_salvo.get("PagamentoFarmacia") in opcoes_pag_farm else 0
@@ -1180,8 +1447,10 @@ elif menu == "Conferência (Mercado)":
 
         salvar_df_mes(sheet_mes, df_mes, ano_ativo, atualizar_preco_catalogo=True)
         novos_tot = calcular_totais_df(df_mes)
+        dt_c_str = dt_compra_in.strftime("%d/%m/%Y")
+        salvar_configs({f"data_compra_{mes_ano_ativo}": dt_c_str}, ano_ativo)
         salvar_resumo_pagamento(mes_ano_ativo, {
-            "DataCompra": dt_compra_in.strftime("%d/%m/%Y"),
+            "DataCompra": dt_c_str,
             "TotalMercadoPlanejado": novos_tot["merc_plan"],
             "TotalMercadoReal": novos_tot["merc_real"],
             "TotalFarmaciaPlanejado": novos_tot["farm_plan"],
@@ -1412,10 +1681,10 @@ elif menu == "Relatório / Histórico":
         | Forma de Pagamento (Mercado) | Débito | Crédito | Subtotal |
         | :--- | :--- | :--- | :--- |
         | **💵 Dinheiro (1º no Caixa)** | - | - | **{formatar_moeda_br(row_det.get('Dinheiro', 0.0))}** |
-        | **🏦 Bradesco** | {formatar_moeda_br(row_det.get('BradescoDebito', 0.0))} | {formatar_moeda_br(row_det.get('BradescoCredito', 0.0))} | **{formatar_moeda_br(safe_float(row_det.get('BradescoDebito', 0.0)) + safe_float(row_det.get('BradescoCredito', 0.0)))}** |
-        | **🤝 Mercado Pago** | {formatar_moeda_br(row_det.get('MercadoPagoDebito', 0.0))} | {formatar_moeda_br(row_det.get('MercadoPagoCredito', 0.0))} | **{formatar_moeda_br(safe_float(row_det.get('MercadoPagoDebito', 0.0)) + safe_float(row_det.get('MercadoPagoCredito', 0.0)))}** |
-        | **🟣 Nubank** | {formatar_moeda_br(row_det.get('NubankDebito', 0.0))} | {formatar_moeda_br(row_det.get('NubankCredito', 0.0))} | **{formatar_moeda_br(safe_float(row_det.get('NubankDebito', 0.0)) + safe_float(row_det.get('NubankCredito', 0.0)))}** |
-        """)
+        | <img src="{LOGO_BRADESCO}" width="20" style="vertical-align:middle;border-radius:4px;"> **Bradesco** | {formatar_moeda_br(row_det.get('BradescoDebito', 0.0))} | {formatar_moeda_br(row_det.get('BradescoCredito', 0.0))} | **{formatar_moeda_br(safe_float(row_det.get('BradescoDebito', 0.0)) + safe_float(row_det.get('BradescoCredito', 0.0)))}** |
+        | <img src="{LOGO_MERCADOPAGO}" width="20" style="vertical-align:middle;border-radius:4px;"> **Mercado Pago** | {formatar_moeda_br(row_det.get('MercadoPagoDebito', 0.0))} | {formatar_moeda_br(row_det.get('MercadoPagoCredito', 0.0))} | **{formatar_moeda_br(safe_float(row_det.get('MercadoPagoDebito', 0.0)) + safe_float(row_det.get('MercadoPagoCredito', 0.0)))}** |
+        | <img src="{LOGO_NUBANK}" width="20" style="vertical-align:middle;border-radius:4px;"> **Nubank** | {formatar_moeda_br(row_det.get('NubankDebito', 0.0))} | {formatar_moeda_br(row_det.get('NubankCredito', 0.0))} | **{formatar_moeda_br(safe_float(row_det.get('NubankDebito', 0.0)) + safe_float(row_det.get('NubankCredito', 0.0)))}** |
+        """, unsafe_allow_html=True)
         st.caption(f"💊 **Farmácia ({mes_det_sel}):** {formatar_moeda_br(row_det.get('TotalFarmaciaReal', 0.0))} (Pago via: {row_det.get('PagamentoFarmacia', '-')}) | 📝 **Obs:** {row_det.get('ObsFechamento', '-')}")
 
 # ==============================================================================
@@ -1423,7 +1692,7 @@ elif menu == "Relatório / Histórico":
 # ==============================================================================
 elif menu == "Cadastro de Produtos":
     st.markdown('<h2 style="margin-bottom: 0px;">🗂️ Cadastro de Produtos e Circuito</h2>', unsafe_allow_html=True)
-    st.caption("Adicione novos produtos fixos escolhendo em qual Departamento/Setor do seu circuito eles entram, ou edite marcas, quantidades e unidades.")
+    st.caption("Adicione novos produtos fixos escolhendo em qual Departamento/Setor do seu circuito eles entram (a Ordem é calculada automaticamente no final do Setor escolhido!).")
 
     if "msg_cat" in st.session_state:
         st.success(st.session_state.pop("msg_cat"))
@@ -1439,14 +1708,14 @@ elif menu == "Cadastro de Produtos":
                 np_m1 = st.text_input("Marca 1 (use '--' para Sem marca específica):", value="--")
                 np_m2 = st.text_input("Marca 2 / Observação:", value="-")
             with c2:
-                prox_num = int(df_cat_atual["Ordem_num"].max() + 1) if not df_cat_atual.empty else 85
                 np_qtd = st.number_input("Quantidade Padrão Mensal:", min_value=0.1, value=1.0, step=0.5, format="%.2f")
                 np_unid = st.selectbox(
                     "Unidade / Métrica:",
                     [
-                        "Unidade", "Kg", "Litro", "Lata", "Pacote", "Pacote (0,5Kg)",
-                        "Caixa", "Caixa Pequena", "Saco", "Saco / Unidade", "Vidro",
-                        "Refil", "Rolo", "Saquinho", "Tubo", "Pote", "Bifes",
+                        "Unidade", "Kg", "Pacote (1Kg)", "Pacote (5Kg)", "Pacote (0,5Kg)",
+                        "Litro", "Lata", "Pacote", "Caixa", "Caixa Pequena",
+                        "Saco", "Saco / Unidade", "Vidro", "Refil", "Rolo",
+                        "Saquinho", "Tubo", "Pote", "Bifes",
                         "Caixa (30 Comprimidos)", "Frasco (0,5 Litro)", "Unidade (100g)", "Unidade / Kit"
                     ]
                 )
@@ -1456,25 +1725,47 @@ elif menu == "Cadastro de Produtos":
                 if not np_prod.strip():
                     st.warning("⚠️ Informe o nome do produto.")
                 else:
+                    # Auto-numeração inteligente da coluna Ordem: insere no final do Setor escolhido e renumera a sequência
+                    df_set_sel = df_cat_atual[df_cat_atual["Setor"] == np_setor]
+                    if not df_set_sel.empty:
+                        ordem_insercao = float(df_set_sel["Ordem_num"].max()) + 0.5
+                    else:
+                        ordem_insercao = float(df_cat_atual["Ordem_num"].max() + 1) if not df_cat_atual.empty else 1.0
+
+                    novo_id_num = int(df_cat_atual["Ordem_num"].max() + 1) if not df_cat_atual.empty else 85
+                    nova_row_cat = pd.DataFrame([{
+                        "Ordem_num": ordem_insercao,
+                        "Codigo": f"#{novo_id_num}",
+                        "Setor": np_setor,
+                        "Produto": np_prod.strip(),
+                        "Marca1": np_m1.strip() or "--",
+                        "Marca2": np_m2.strip() or "-",
+                        "QtdPadrao_num": float(np_qtd),
+                        "Unidade": np_unid,
+                        "PrecoRef_num": float(np_preco),
+                        "Ativo_bool": True
+                    }])
+                    df_cat_reord = pd.concat([df_cat_atual, nova_row_cat], ignore_index=True).sort_values("Ordem_num").reset_index(drop=True)
+
                     sh_cat = obter_aba_catalogo(ano_ativo)
-                    executar_com_retry(
-                        sh_cat.append_row,
-                        [
-                            str(prox_num),
-                            f"#{prox_num}",
-                            np_setor,
-                            np_prod.strip(),
-                            np_m1.strip() or "--",
-                            np_m2.strip() or "-",
-                            formatar_num_planilha(np_qtd, 3),
-                            np_unid,
-                            formatar_num_planilha(np_preco, 2),
-                            "TRUE"
-                        ],
-                        value_input_option="USER_ENTERED"
-                    )
+                    linhas_c = [COLUNAS_CATALOGO]
+                    for idx_novo, rc in df_cat_reord.iterrows():
+                        linhas_c.append([
+                            str(idx_novo + 1),
+                            str(rc["Codigo"]),
+                            str(rc["Setor"]),
+                            str(rc["Produto"]),
+                            str(rc["Marca1"]),
+                            str(rc["Marca2"]),
+                            formatar_num_planilha(safe_float(rc["QtdPadrao_num"]), 3),
+                            str(rc["Unidade"]),
+                            formatar_num_planilha(safe_float(rc["PrecoRef_num"]), 2),
+                            "TRUE" if safe_bool(rc["Ativo_bool"]) else "FALSE"
+                        ])
+                    executar_com_retry(sh_cat.clear)
+                    executar_com_retry(sh_cat.append_rows, linhas_c, value_input_option="USER_ENTERED")
                     limpar_cache_dados()
-                    st.session_state["msg_cat"] = f"✅ Produto '{np_prod}' cadastrado no {np_setor}!"
+                    st.session_state["msg_cat"] = f"✅ Produto '{np_prod}' cadastrado automaticamente no final do '{np_setor}'!"
                     st.rerun()
 
     st.markdown("### 📋 Editar Produtos Existentes (Ordem, Setor, Marcas, Quantidade Padrão)")
