@@ -1,4 +1,4 @@
-# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.20 ===
+# === APLICATIVO LISTA DE COMPRAS & MERCADO - VERSÃO v.1.20.1 ===
 import base64
 import json
 import math
@@ -11,7 +11,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import gspread
 from google.oauth2.service_account import Credentials
 
-VERSAO_APP = "v.1.20"
+VERSAO_APP = "v.1.20.1"
 
 # Configuração de página idêntica ao padrão mobile/centered do App Luz & Água
 st.set_page_config(
@@ -153,7 +153,7 @@ def agora_br():
 def hoje_br():
     return agora_br().date()
 
-# === FUNÇÕES UTILITÁRIAS DE NÚMEROS E FORMATAÇÃO ===
+# === FUNÇÕES UTILITÁRIAS DE NÚMEROS, FORMATAÇÃO E PROTEÇÃO CONTRA #ERROR! ===
 def arredondar_moeda(valor, casas=2):
     try:
         d = Decimal(str(valor))
@@ -184,7 +184,6 @@ def safe_bool(val):
 
 def formatar_num_planilha(valor_float, casas=2):
     v = arredondar_moeda(safe_float(valor_float), casas)
-    # Se for quantidade inteira exata (ex: 2.00), formata sem casas desnecessárias quando casas=3
     if casas == 3 and abs(v - round(v)) < 1e-6:
         return str(int(round(v)))
     return f"{v:.{casas}f}".replace(".", ",")
@@ -200,8 +199,29 @@ def formatar_qtd_br(valor_float):
         return str(int(round(v)))
     return f"{v:.2f}".rstrip("0").rstrip(".").replace(".", ",")
 
-def exibir_marca_limpa(marca_str):
-    m = str(marca_str or "").strip()
+def escapar_texto_sheets(val_str):
+    """
+    Evita que textos iniciados com '+' ou '=' (como '+Forte Reforçado - 50 Lts.')
+    sejam interpretados pelo Google Sheets como fórmula matemática (#ERROR!).
+    """
+    s = str(val_str or "").strip()
+    if s.startswith("+") or s.startswith("="):
+        return "'" + s
+    return s
+
+def limpar_marca_lida(marca_str, cod_str=""):
+    """Remove eventual apóstrofo inicial e repara automaticamente '#ERROR!' nos Sacos de Lixo."""
+    m = str(marca_str or "").strip().lstrip("'")
+    c = str(cod_str or "").strip()
+    if "ERROR" in m.upper():
+        if c == "#22A":
+            return "+Forte Reforçado - 50 Lts."
+        if c == "#22B":
+            return "+Forte Reforçado - 100 Lts."
+    return m
+
+def exibir_marca_limpa(marca_str, cod_str=""):
+    m = limpar_marca_lida(marca_str, cod_str)
     if m in ["", "-", "--", "nan", "None"]:
         return "Sem marca específica"
     return m
@@ -221,7 +241,7 @@ def data_padrao_dia_5(mes_ano_str):
         h = hoje_br()
         return date(h.year, h.month, 5)
 
-# === LISTA OFICIAL DOS DEPARTAMENTOS E DOS 84 PRODUTOS (CIRCUITO DO MERCADO) ===
+# === LISTA OFICIAL DOS DEPARTAMENTOS E DOS 88 PRODUTOS (CIRCUITO DO MERCADO) ===
 SETORES_OFICIAIS = [
     "💊 Antes do Mercado: Farmácia",
     "🥩 Setor A: Açougue/Salgados/Congelados",
@@ -429,7 +449,7 @@ def listar_anos_disponiveis_gdrive():
             nome = str(arq.get("name", "")).strip()
             if nome.startswith("Compras "):
                 partes = nome.split(" ")
-                if len(partes) >= 2 and partes[-1].isdigit() and len(partes[-1]) == 4:
+                if len(partes >= 2) and partes[-1].isdigit() and len(partes[-1]) == 4:
                     anos.add(int(partes[-1]))
     except Exception:
         pass
@@ -494,11 +514,16 @@ def obter_aba_catalogo(ano_str=None):
         vals = executar_com_retry(sheet.get_values)
         if len(vals) <= 1:
             raise gspread.WorksheetNotFound("Catálogo vazio")
-        # Migração automática para v.1.20 (inclui as 6 variações de Shampoo/Condicionador/Kit em Unidade e preserva preços/quantidades)
+        # Migração automática para v.1.20.1 (repara #ERROR! de '+Forte', mantém 6 variações de Shampoo e preserva preços/quantidades)
         codigos_atuais = {str(r[1]).strip() for r in vals[1:] if len(r) > 1}
         mapa_unid_atuais = {str(r[1]).strip(): (r[7] if len(r) > 7 else "") for r in vals[1:] if len(r) > 1}
-        precisa_migrar_v120 = (
-            "#22A" not in codigos_atuais
+        tem_erro_formula = any(
+            (len(r) > 4 and "ERROR" in str(r[4]).upper()) or (len(r) > 5 and "ERROR" in str(r[5]).upper())
+            for r in vals[1:]
+        )
+        precisa_migrar_v1201 = (
+            tem_erro_formula
+            or "#22A" not in codigos_atuais
             or "#29A" not in codigos_atuais
             or "#30K" not in codigos_atuais
             or mapa_unid_atuais.get("#1") != "Pacote (5Kg)"
@@ -507,7 +532,7 @@ def obter_aba_catalogo(ano_str=None):
             or mapa_unid_atuais.get("#8") != "Pacote (1Kg)"
             or any(len(r) > 7 and r[7] in ["Un", "Lt", "Pct", "Cx", "Sc", "Sq", "Vd", "Tb", "Rol"] for r in vals[1:])
         )
-        if precisa_migrar_v120:
+        if precisa_migrar_v1201:
             precos_antigos = {str(r[1]).strip(): (r[8] if len(r) > 8 else "0,00") for r in vals[1:] if len(r) > 1}
             qtds_antigas = {str(r[1]).strip(): safe_float(r[6]) for r in vals[1:] if len(r) > 6}
             if "#22" in precos_antigos and "#22A" not in precos_antigos:
@@ -524,12 +549,16 @@ def obter_aba_catalogo(ano_str=None):
                 pr_salvo = precos_antigos.get(cod, "0,00")
                 qtd_usar = qtds_antigas.get(cod, qtd_p) if (cod in qtds_antigas and qtds_antigas[cod] > 0 and cod != "#1") else qtd_p
                 linhas_mig.append([
-                    str(ordem), cod, setor, prod, m1, m2,
+                    str(ordem), cod, setor, prod,
+                    escapar_texto_sheets(m1), escapar_texto_sheets(m2),
                     formatar_num_planilha(qtd_usar, 3), unid, pr_salvo, "TRUE"
                 ])
             for r in vals[1:]:
                 if len(r) > 1 and str(r[1]).strip() not in cods_oficiais and str(r[1]).strip() not in ["#22", "#29", "#30"]:
-                    linhas_mig.append(r[:len(COLUNAS_CATALOGO)])
+                    r_copia = list(r[:len(COLUNAS_CATALOGO)])
+                    if len(r_copia) > 4:
+                        r_copia[4] = escapar_texto_sheets(limpar_marca_lida(r_copia[4], r_copia[1]))
+                    linhas_mig.append(r_copia)
             executar_com_retry(sheet.clear)
             executar_com_retry(sheet.append_rows, linhas_mig, value_input_option="USER_ENTERED")
         return sheet
@@ -543,7 +572,8 @@ def obter_aba_catalogo(ano_str=None):
         for item in CATALOGO_INICIAL:
             ordem, cod, setor, prod, m1, m2, qtd_p, unid = item
             linhas_init.append([
-                str(ordem), cod, setor, prod, m1, m2,
+                str(ordem), cod, setor, prod,
+                escapar_texto_sheets(m1), escapar_texto_sheets(m2),
                 formatar_num_planilha(qtd_p, 3), unid, "0,00", "TRUE"
             ])
         executar_com_retry(sheet.append_rows, linhas_init, value_input_option="USER_ENTERED")
@@ -560,6 +590,8 @@ def carregar_df_catalogo(ano_str=None):
     for c in COLUNAS_CATALOGO:
         if c not in df.columns:
             df[c] = ""
+    df["Marca1"] = [limpar_marca_lida(m, c) for m, c in zip(df["Marca1"], df["Codigo"])]
+    df["Marca2"] = [limpar_marca_lida(m, c) for m, c in zip(df["Marca2"], df["Codigo"])]
     df["Ordem_num"] = df["Ordem"].apply(lambda x: int(safe_float(x)) if safe_float(x) > 0 else 999)
     df["QtdPadrao_num"] = df["QtdPadrao"].apply(safe_float)
     df["PrecoRef_num"] = df["PrecoRef"].apply(safe_float)
@@ -605,8 +637,8 @@ def obter_aba_mes(mes_ano_str, ano_str=None):
             str(r["Codigo"]),
             str(r["Setor"]),
             str(r["Produto"]),
-            str(r["Marca1"]),
-            str(r["Marca2"]),
+            escapar_texto_sheets(r["Marca1"]),
+            escapar_texto_sheets(r["Marca2"]),
             str(r["Unidade"]),
             "FALSE",  # Planejado
             formatar_num_planilha(qtd_p, 3),
@@ -633,7 +665,7 @@ def ler_dados_aba_mes_cached(mes_ano_str, ano_str=None):
         if c not in df.columns:
             df[c] = ""
 
-    # Sincroniza nomes/unidades/ordem/quantidades padrão do Catálogo e remove códigos antigos substituídos (#22, #29, #30)
+    # Sincroniza nomes/unidades/ordem/quantidades padrão do Catálogo e repara eventual #ERROR! nas marcas
     df_cat = carregar_df_catalogo(ano_str)
     cods_obsoletos = {"#22", "#29", "#30"}
     if any(c in df["Codigo"].astype(str).str.strip().values for c in cods_obsoletos):
@@ -644,6 +676,11 @@ def ler_dados_aba_mes_cached(mes_ano_str, ano_str=None):
     precisa_salvar_migracao = False
     for idx_m, rm in df.iterrows():
         c_m = str(rm["Codigo"]).strip()
+        m1_limpa = limpar_marca_lida(rm["Marca1"], c_m)
+        if m1_limpa != str(rm["Marca1"]):
+            df.at[idx_m, "Marca1"] = m1_limpa
+            precisa_salvar_migracao = True
+
         if c_m in mapa_cat_meta:
             rc_ref = mapa_cat_meta[c_m]
             qtd_cat_atual = safe_float(rc_ref["QtdPadrao_num"])
@@ -668,7 +705,7 @@ def ler_dados_aba_mes_cached(mes_ano_str, ano_str=None):
 
             if (str(rm["Produto"]) != str(rc_ref["Produto"]) or
                 str(rm["Unidade"]) != str(rc_ref["Unidade"]) or
-                str(rm["Marca1"]) != str(rc_ref["Marca1"]) or
+                str(df.at[idx_m, "Marca1"]) != str(rc_ref["Marca1"]) or
                 str(rm["Marca2"]) != str(rc_ref["Marca2"]) or
                 str(rm["Ordem"]) != str(int(rc_ref["Ordem_num"]))):
                 df.at[idx_m, "Ordem"] = str(int(rc_ref["Ordem_num"]))
@@ -764,13 +801,16 @@ def salvar_df_mes(sheet_ou_mes_ano, df_mes, ano_str=None, atualizar_preco_catalo
         elif pr_pl > 0:
             mapa_precos_ref[cod_str] = pr_pl
 
+        m1_limpa = limpar_marca_lida(r["Marca1"], cod_str)
+        m2_limpa = limpar_marca_lida(r["Marca2"], cod_str)
+
         linhas_salvar.append([
             str(int(safe_float(r["Ordem_num"]))),
             cod_str,
             str(r["Setor"]),
             str(r["Produto"]),
-            str(r["Marca1"]),
-            str(r["Marca2"]),
+            escapar_texto_sheets(m1_limpa),
+            escapar_texto_sheets(m2_limpa),
             str(r["Unidade"]),
             "TRUE" if plan_b else "FALSE",
             formatar_num_planilha(qtd_pl, 3),
@@ -780,7 +820,7 @@ def salvar_df_mes(sheet_ou_mes_ano, df_mes, ano_str=None, atualizar_preco_catalo
             formatar_num_planilha(qtd_co, 3),
             formatar_num_planilha(pr_co, 2),
             formatar_num_planilha(sub_co, 2),
-            str(r.get("ObsMes", "") or "")
+            escapar_texto_sheets(str(r.get("ObsMes", "") or ""))
         ])
 
     executar_com_retry(sheet.clear)
@@ -797,6 +837,8 @@ def salvar_df_mes(sheet_ou_mes_ano, df_mes, ano_str=None, atualizar_preco_catalo
                     while len(row_c) < len(COLUNAS_CATALOGO):
                         row_c.append("")
                     cod_c = str(row_c[1]).strip()
+                    row_c[4] = escapar_texto_sheets(limpar_marca_lida(row_c[4], cod_c))
+                    row_c[5] = escapar_texto_sheets(limpar_marca_lida(row_c[5], cod_c))
                     if cod_c in mapa_precos_ref and mapa_precos_ref[cod_c] > 0:
                         row_c[8] = formatar_num_planilha(mapa_precos_ref[cod_c], 2)
                     novas_cat.append(row_c[:len(COLUNAS_CATALOGO)])
@@ -979,13 +1021,15 @@ def gerar_html_offline_mercado(mes_ano_str, df_mes, resumo_dict, data_padrao_str
     itens_json = []
     for _, r in df_mes.sort_values("Ordem_num").iterrows():
         unid_str = str(r["Unidade"])
+        cod_str = str(r["Codigo"]).strip()
+        m2_limpa = limpar_marca_lida(r["Marca2"], cod_str)
         itens_json.append({
             "ordem": int(safe_float(r["Ordem_num"])),
-            "codigo": str(r["Codigo"]).strip(),
+            "codigo": cod_str,
             "setor": str(r["Setor"]),
             "produto": str(r["Produto"]),
-            "marca1": exibir_marca_limpa(r["Marca1"]),
-            "marca2": str(r["Marca2"] or "").strip() if str(r["Marca2"] or "").strip() not in ["-", "--", "nan"] else "",
+            "marca1": exibir_marca_limpa(r["Marca1"], cod_str),
+            "marca2": m2_limpa if m2_limpa not in ["-", "--", "nan"] else "",
             "unidade": unid_str,
             "fracionado": eh_unidade_fracionada(unid_str),
             "planejado": bool(r["Planejado_bool"]),
@@ -1257,6 +1301,18 @@ function moedaBR(v) {{
   return "R$ " + n.toFixed(2).replace(".", ",");
 }}
 
+function repararMarcasSacoLixo(est) {{
+  if (!est || !est.itens) return;
+  est.itens.forEach(it => {{
+    if (it.codigo === "#22A" && (!it.marca1 || it.marca1.toUpperCase().includes("ERROR"))) {{
+      it.marca1 = "+Forte Reforçado - 50 Lts.";
+    }}
+    if (it.codigo === "#22B" && (!it.marca1 || it.marca1.toUpperCase().includes("ERROR"))) {{
+      it.marca1 = "+Forte Reforçado - 100 Lts.";
+    }}
+  }});
+}}
+
 function carregarEstado() {{
   try {{
     let salvo = localStorage.getItem(CHAVE_STORAGE);
@@ -1268,6 +1324,7 @@ function carregarEstado() {{
   }} catch (e) {{
     estado = JSON.parse(JSON.stringify(DADOS_ORIGINAIS));
   }}
+  repararMarcasSacoLixo(estado);
   estado.setores.forEach(s => {{
     if (cortinasAbertas[s] === undefined) cortinasAbertas[s] = true;
   }});
@@ -1558,9 +1615,31 @@ function atualizarFechamento() {{
   atualizarResumosTopoECaixa();
 }}
 
-function baixarArquivoRetorno() {{
+async function baixarArquivoRetorno() {{
   atualizarFechamento();
-  const blob = new Blob([JSON.stringify(estado, null, 2)], {{ type: "application/json" }});
+  const conteudoJson = JSON.stringify(estado, null, 2);
+
+  // Tenta abrir o seletor de pastas nativo ("Salvar como") caso o navegador suporte
+  if (window.showSaveFilePicker) {{
+    try {{
+      const handle = await window.showSaveFilePicker({{
+        suggestedName: NOME_ARQ_RETORNO,
+        types: [{{
+          description: "Arquivo JSON de Retorno",
+          accept: {{ "application/json": [".json"] }}
+        }}]
+      }});
+      const writable = await handle.createWritable();
+      await writable.write(conteudoJson);
+      await writable.close();
+      document.getElementById("status_salvo").innerText = "💾 Arquivo '" + NOME_ARQ_RETORNO + "' salvo na pasta escolhida!";
+      return;
+    }} catch (err) {{
+      if (err && err.name === "AbortError") return;
+    }}
+  }}
+
+  const blob = new Blob([conteudoJson], {{ type: "application/json" }});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -1914,8 +1993,9 @@ if menu == "Planejamento (Casa)":
     # Central Offline no Planejamento: permite gerar o arquivo HTML logo após planejar em casa
     with st.expander("📴 Modo Offline (Baixar Lista p/ Usar Sem Internet no Mercado)"):
         st.caption(
-            f"Salve o arquivo **`{mes_ano_ativo} Compras.html`** na sua pasta **`Download/Compras`** do Android antes de sair do Wi-Fi. "
-            "Lá no mercado, basta abrir esse arquivo pelo navegador: ele funciona **100% sem internet** (com setores retráteis, adição de item extra e cadastro de preços de toda a lista)!"
+            f"Salve o arquivo **`{mes_ano_ativo} Compras.html`** na sua pasta **`Download/Compras`** do Android antes de sair do Wi-Fi.\n\n"
+            "💡 **Para o celular sempre perguntar onde salvar (e você escolher a pasta `Compras` tanto no `.html` quanto no `.json`):** "
+            "no Chrome do Android, toque nos **3 pontinhos (`⋮`)** $\\rightarrow$ **Configurações** $\\rightarrow$ **Downloads** $\\rightarrow$ ative **'Perguntar onde salvar os arquivos'**."
         )
         html_offline_str = gerar_html_offline_mercado(
             mes_ano_ativo, df_mes, resumo_salvo, dt_topo_plan.strftime("%d/%m/%Y")
@@ -1957,7 +2037,6 @@ if menu == "Planejamento (Casa)":
                 av_preco = st.number_input("Preço Unit. Estimado (R$)", min_value=0.0, value=0.0, step=0.5, format="%.2f")
             if st.form_submit_button("Inserir Item Avulso já Marcado para Compra", use_container_width=True):
                 if av_prod.strip():
-                    # Insere logo após o último item do próprio setor escolhido
                     df_set_av = df_mes[df_mes["Setor"] == av_setor]
                     nova_ordem = int(df_set_av["Ordem_num"].max() + 1) if not df_set_av.empty else int(df_mes["Ordem_num"].max() + 1)
                     novo_cod = f"#AV{int(time.time()) % 10000}"
@@ -2010,10 +2089,10 @@ if menu == "Planejamento (Casa)":
 
             with st.expander(titulo_exp, expanded=expandir_padrao_plan):
                 for idx_row, row in df_setor.iterrows():
-                    cod = str(row["Codigo"])
+                    cod = str(row["Codigo"]).strip()
                     prod = str(row["Produto"])
-                    m1 = exibir_marca_limpa(row["Marca1"])
-                    m2 = str(row["Marca2"] or "").strip()
+                    m1 = exibir_marca_limpa(row["Marca1"], cod)
+                    m2 = limpar_marca_lida(row["Marca2"], cod)
                     m2_txt = f" | <b>{m2}</b>" if m2 not in ["", "-", "--", "nan"] else ""
                     unid = str(row["Unidade"])
                     plan_atual = bool(row["Planejado_bool"])
@@ -2133,7 +2212,6 @@ if menu == "Planejamento (Casa)":
             df_mes.at[idx_r, "Planejado_bool"] = b_plan
             df_mes.at[idx_r, "QtdPlanejada_num"] = q_pl
             df_mes.at[idx_r, "PrecoUnit_num"] = p_pl
-            # Se ainda não foi comprado, já deixa a quantidade e preço real pré-alinhados com o planejado
             if not df_mes.at[idx_r, "Comprado_bool"]:
                 df_mes.at[idx_r, "QtdComprada_num"] = q_pl
                 df_mes.at[idx_r, "PrecoRealUnit_num"] = p_pl
@@ -2218,8 +2296,8 @@ elif menu == "Conferência (Mercado)":
         ])
         with aba_off_ida:
             st.caption(
-                f"Toque abaixo para salvar **`{mes_ano_ativo} Compras.html`** na pasta **`Download/Compras`** do celular. "
-                "No mercado, abra o arquivo sem precisar de dados móveis: marque o que comprou, cadastre preços e ao final clique em **Baixar Retorno**."
+                f"Toque abaixo para salvar **`{mes_ano_ativo} Compras.html`** na pasta **`Download/Compras`** do celular.\n\n"
+                "💡 **Como salvar direto na pasta `Download/Compras`:** no navegador Chrome do Android, toque nos **3 pontinhos (`⋮`)** $\\rightarrow$ **Configurações** $\\rightarrow$ **Downloads** $\\rightarrow$ ative **'Perguntar onde salvar os arquivos'**. Assim, tanto no `.html` quanto no `.json` de retorno ele abre a janelinha para você escolher a pasta `Compras`!"
             )
             html_off_conf = gerar_html_offline_mercado(
                 mes_ano_ativo, df_mes, resumo_salvo, data_compra_padrao_mes.strftime("%d/%m/%Y")
@@ -2357,10 +2435,10 @@ elif menu == "Conferência (Mercado)":
 
             with st.expander(f"{setor_nome}  —  ({status_setor})", expanded=expandir_padrao_conf):
                 for idx_row, row in df_setor.iterrows():
-                    cod = str(row["Codigo"])
+                    cod = str(row["Codigo"]).strip()
                     prod = str(row["Produto"])
-                    m1 = exibir_marca_limpa(row["Marca1"])
-                    m2 = str(row["Marca2"] or "").strip()
+                    m1 = exibir_marca_limpa(row["Marca1"], cod)
+                    m2 = limpar_marca_lida(row["Marca2"], cod)
                     m2_txt = f" | {m2}" if m2 not in ["", "-", "--", "nan"] else ""
                     unid = str(row["Unidade"])
                     comp_atual = bool(row["Comprado_bool"])
@@ -2604,7 +2682,6 @@ elif menu == "O que Faltou Comprar":
     if "msg_faltou" in st.session_state:
         st.success(st.session_state.pop("msg_faltou"))
 
-    # Filtra itens planejados que não foram marcados como comprados OU cuja quantidade comprada foi menor que a planejada
     cond_faltou = df_mes["Planejado_bool"] & ((~df_mes["Comprado_bool"]) | (df_mes["QtdComprada_num"] + 1e-4 < df_mes["QtdPlanejada_num"]))
     df_faltou = df_mes[cond_faltou].copy()
 
@@ -2643,7 +2720,7 @@ elif menu == "O que Faltou Comprar":
                 st.markdown(f'<div class="setor-header">{setor_nome}</div>', unsafe_allow_html=True)
                 for idx_f, rf in df_sf.iterrows():
                     qtd_falta, custo_falta = calc_custo_faltante(rf)
-                    m1 = exibir_marca_limpa(rf["Marca1"])
+                    m1 = exibir_marca_limpa(rf["Marca1"], rf["Codigo"])
                     pr_base = rf["PrecoRealUnit_num"] if rf["PrecoRealUnit_num"] > 0 else rf["PrecoUnit_num"]
                     chk_f = st.checkbox(
                         f"Dar baixa: **{rf['Produto']}** ({m1}) — Faltam **{formatar_qtd_br(qtd_falta)} {rf['Unidade']}** | Estimado: **{formatar_moeda_br(custo_falta)}** (Unit: {formatar_moeda_br(pr_base)})",
@@ -2682,7 +2759,7 @@ elif menu == "Tabela de Preços do Mês":
     df_grade_precos = pd.DataFrame({
         "Setor": df_mes["Setor"],
         "Produto": df_mes["Produto"],
-        "Marca": df_mes["Marca1"].apply(exibir_marca_limpa),
+        "Marca": [exibir_marca_limpa(m, c) for m, c in zip(df_mes["Marca1"], df_mes["Codigo"])],
         "Unidade": df_mes["Unidade"],
         "Qtd_Planejada": df_mes["QtdPlanejada_num"].apply(formatar_qtd_br),
         "Preco_Unit_RS": df_mes["PrecoUnit_num"].apply(lambda x: f"{safe_float(x):.2f}".replace(".", ","))
@@ -2724,7 +2801,6 @@ elif menu == "Tabela de Preços do Mês":
 # GUIA 5: RELATÓRIO / COFRE HISTÓRICO (LAYOUT FIEL AO ESBOÇO DO USUÁRIO)
 # ==============================================================================
 elif menu == "Relatório / Histórico":
-    # Cabeçalho alinhado com o seletor de Mês/Ano ao lado direito do título (idêntico à imagem enviada)
     col_t_rel, col_s_rel, _ = st.columns([1.35, 1.0, 0.8])
     with col_t_rel:
         st.markdown('<h2 style="margin-top: 2px; margin-bottom: 0px;">📅 Resumo Mensal</h2>', unsafe_allow_html=True)
@@ -2740,7 +2816,6 @@ elif menu == "Relatório / Histórico":
     ano_rel_sel = mes_rel_sel.split(" ")[-1]
     res_mes_rel = obter_resumo_mes(mes_rel_sel, ano_rel_sel)
 
-    # Se o mês selecionado for o ativo, combina com os totais em tempo real caso ainda não tenha clicado em salvar
     if mes_rel_sel == mes_ano_ativo:
         df_rel_mes = df_mes
     else:
@@ -2769,18 +2844,15 @@ elif menu == "Relatório / Histórico":
         brad_deb_exib + brad_cred_exib + mp_deb_exib + mp_cred_exib + nu_deb_exib + nu_cred_exib, 2
     )
 
-    # Dados de Transporte (Ida e Volta)
     tr_ida_pag = str(res_mes_rel.get("TranspIdaPag", "Não houve"))
     tr_ida_val = safe_float(res_mes_rel.get("TranspIdaVal", 0.0))
     tr_volta_pag = str(res_mes_rel.get("TranspVoltaPag", "Não houve"))
     tr_volta_val = safe_float(res_mes_rel.get("TranspVoltaVal", 0.0))
 
-    # Soma Geral do Mês (Farmácia + Mercado Líquido [Pagamentos ou Real c/ Desconto] + Transporte)
     base_merc_geral = (din_merc_exib + tot_cartoes_merc) if (din_merc_exib + tot_cartoes_merc) > 0 else merc_real_exib
     total_geral_exib = arredondar_moeda(farm_real_exib + base_merc_geral + tr_ida_val + tr_volta_val, 2)
     badge_clube_rel = f'<br><span style="color:#2ECC71;font-size:0.75rem;font-weight:500;">(🏷️ -{formatar_moeda_br(desc_clube_exib)})</span>' if desc_clube_exib > 0 else ""
 
-    # Forma de pagamento da Farmácia
     pag_farm_metodo = str(res_mes_rel.get("PagamentoFarmacia", "Dinheiro") or "Dinheiro")
     if "Bradesco" in pag_farm_metodo:
         icone_farm_pag = f'<img src="{LOGO_BRADESCO}" width="20" style="vertical-align:middle;border-radius:4px;margin-right:6px;"> <b>Bradesco</b>'
@@ -2794,7 +2866,6 @@ elif menu == "Relatório / Histórico":
     farm_deb_str = formatar_moeda_br(farm_real_exib) if "Débito" in pag_farm_metodo else ("-" if "Dinheiro" in pag_farm_metodo else "R$ 0,00")
     farm_cred_str = formatar_moeda_br(farm_real_exib) if "Crédito" in pag_farm_metodo else ("-" if "Dinheiro" in pag_farm_metodo else "R$ 0,00")
 
-    # Cálculo das linhas da seção Forma de Pagamento (Transporte) com indicadores visuais Ida / Volta
     def montar_dados_transporte(chave_banco):
         usou_ida = tr_ida_pag.startswith(chave_banco) and tr_ida_val > 0
         usou_volta = tr_volta_pag.startswith(chave_banco) and tr_volta_val > 0
@@ -2827,7 +2898,6 @@ elif menu == "Relatório / Histórico":
     iv_mp, td_mp, tc_mp, ts_mp = montar_dados_transporte("Mercado Pago")
     iv_nu, td_nu, tc_nu, ts_nu = montar_dados_transporte("Nubank")
 
-    # Renderização das 2 Tabelas idênticas ao simulado do usuário
     st.markdown(f"""
     <style>
         .tbl-resumo {{
@@ -3026,7 +3096,6 @@ elif menu == "Cadastro de Produtos":
                 if not np_prod.strip():
                     st.warning("⚠️ Informe o nome do produto.")
                 else:
-                    # Auto-numeração inteligente da coluna Ordem: insere no final do Setor escolhido e renumera a sequência
                     df_set_sel = df_cat_atual[df_cat_atual["Setor"] == np_setor]
                     if not df_set_sel.empty:
                         ordem_insercao = float(df_set_sel["Ordem_num"].max()) + 0.5
@@ -3056,8 +3125,8 @@ elif menu == "Cadastro de Produtos":
                             str(rc["Codigo"]),
                             str(rc["Setor"]),
                             str(rc["Produto"]),
-                            str(rc["Marca1"]),
-                            str(rc["Marca2"]),
+                            escapar_texto_sheets(rc["Marca1"]),
+                            escapar_texto_sheets(rc["Marca2"]),
                             formatar_num_planilha(safe_float(rc["QtdPadrao_num"]), 3),
                             str(rc["Unidade"]),
                             formatar_num_planilha(safe_float(rc["PrecoRef_num"]), 2),
@@ -3120,13 +3189,16 @@ elif menu == "Cadastro de Produtos":
             if cod_c in mapa_pr_antigo and abs(novo_p - mapa_pr_antigo[cod_c]) > 1e-4:
                 mudancas_pr[cod_c] = novo_p
 
+            m1_c = limpar_marca_lida(rc.get("Marca1", "--"), cod_c) or "--"
+            m2_c = limpar_marca_lida(rc.get("Marca2", "-"), cod_c) or "-"
+
             linhas_c.append([
                 str(int(safe_float(rc.get("Ordem", idx_c + 1)))),
                 cod_c,
                 str(rc.get("Setor", SETORES_OFICIAIS[-1])),
                 str(rc.get("Produto", "")).strip(),
-                str(rc.get("Marca1", "--")).strip() or "--",
-                str(rc.get("Marca2", "-")).strip() or "-",
+                escapar_texto_sheets(m1_c),
+                escapar_texto_sheets(m2_c),
                 formatar_num_planilha(nova_q, 3),
                 str(rc.get("Unidade", "Unidade")).strip() or "Unidade",
                 formatar_num_planilha(novo_p, 2),
@@ -3156,4 +3228,4 @@ elif menu == "Cadastro de Produtos":
         limpar_cache_dados()
         st.session_state["msg_cat"] = "✅ Catálogo de produtos atualizado e sincronizado com o mês ativo!"
         st.rerun()
-# === FIM DO CÓDIGO - VERSÃO v.1.20 ===
+# === FIM DO CÓDIGO - VERSÃO v.1.20.1 ===
