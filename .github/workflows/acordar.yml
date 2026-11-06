@@ -1,62 +1,62 @@
 name: Manter App Streamlit Acordado
 
 on:
-schedule:
-- cron: '0 12 * * *'
-workflow_dispatch:
+  schedule:
+    - cron: '0 12 * * *'
+  workflow_dispatch:
 
 jobs:
-acordar-streamlit:
-runs-on: ubuntu-latest
+  acordar-streamlit:
+    runs-on: ubuntu-latest
 
-steps:
-  - name: Configurar Python 3.12
-    uses: actions/setup-python@v6
-    with:
-      python-version: '3.12'
+    steps:
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
 
-  - name: Instalar Playwright e Chromium
-    run: |
-      pip install playwright
-      playwright install chromium --with-deps
+      - name: Instalar Playwright e Chromium
+        run: |
+          pip install playwright
+          playwright install chromium --with-deps
 
-  - name: Visitar App e Acordar se Necessário
-    run: |
-      python - << 'EOF'
-      import time
-      from playwright.sync_api import sync_playwright
+      - name: Visitar App e Acordar se Necessario
+        run: |
+          python - << 'EOF'
+          import time
+          from playwright.sync_api import sync_playwright
 
-      URLS = [
-          "https://lista-compras-by-tiko.streamlit.app/"
-      ]
+          URLS = [
+              "https://lista-compras-by-tiko.streamlit.app/"
+          ]
 
-      def verificar_e_acordar():
-          with sync_playwright() as p:
-              browser = p.chromium.launch(headless=True)
-              context = browser.new_context()
-              page = context.new_page()
+          def verificar_e_acordar():
+              with sync_playwright() as p:
+                  browser = p.chromium.launch(headless=True)
+                  context = browser.new_context()
+                  page = context.new_page()
 
-              for url in URLS:
-                  print(f"Acessando: {url}")
-                  try:
-                      page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                      page.wait_for_timeout(8000)
+                  for url in URLS:
+                      print(f"Acessando: {url}")
+                      try:
+                          page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                          page.wait_for_timeout(8000)
 
-                      botao_acordar = page.get_by_role("button", name="Yes, get this app back up!")
-                      if botao_acordar.count() > 0 and botao_acordar.first.is_visible():
-                          print("App em modo de hibernacao! Clicando em 'Yes, get this app back up!'...")
-                          botao_acordar.first.click()
-                          page.wait_for_timeout(25000)
-                          print("Comando de despertar enviado e processado com sucesso!")
-                      else:
-                          print("App ja esta ativo e acordado! Tempo de atividade renovado.")
-                          page.wait_for_timeout(5000)
-                  except Exception as erro:
-                      print(f"Erro ao verificar a URL {url}: {erro}")
+                          botao_acordar = page.get_by_role("button", name="Yes, get this app back up!")
+                          if botao_acordar.count() > 0 and botao_acordar.first.is_visible():
+                              print("App em modo de hibernacao! Clicando em 'Yes, get this app back up!'...")
+                              botao_acordar.first.click()
+                              page.wait_for_timeout(25000)
+                              print("Comando de despertar enviado e processado com sucesso!")
+                          else:
+                              print("App ja esta ativo e acordado! Tempo de atividade renovado.")
+                              page.wait_for_timeout(5000)
+                      except Exception as erro:
+                          print(f"Erro ao verificar a URL {url}: {erro}")
 
-              context.close()
-              browser.close()
+                  context.close()
+                  browser.close()
 
-      if __name__ == "__main__":
-          verificar_e_acordar()
-      EOF
+          if __name__ == "__main__":
+              verificar_e_acordar()
+          EOF
